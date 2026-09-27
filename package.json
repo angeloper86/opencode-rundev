@@ -1,0 +1,26 @@
+{
+  "name": "opencode-rundev",
+  "version": "0.1.0",
+  "description": "Run & Debug para el mundo terminal-first: levanta y baja el entorno de desarrollo de un repo desde OpenCode, sin LLM en el medio.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tui": "./src/tui.tsx"
+  },
+  "files": [
+    "src",
+    "rundev.schema.json",
+    "README.md"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "dev-environment",
+    "docker-compose",
+    "rundev"
+  ],
+  "dependencies": {
+    "@opencode/plugin": "2.0.11"
+  }
+}

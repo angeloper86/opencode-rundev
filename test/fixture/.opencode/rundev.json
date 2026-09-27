@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "default": ["sleeper"],
+  "services": {
+    "sleeper": { "kind": "process", "up": "/bin/sleep 300", "port": 45999 }
+  }
+}

@@ -1,0 +1,3 @@
+.opencode/.rundev/
+node_modules/
+*.log

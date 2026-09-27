@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/angeloquijano/opencode-rundev/main/rundev.schema.json",
+  "title": "rundev manifest",
+  "description": "Servicios locales de un repo para el plugin opencode-rundev (.opencode/rundev.json).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "enum": [1] },
+    "default": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Servicios que `up`/`down` usan cuando no se pide ninguno."
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/service" }
+    }
+  },
+  "required": ["services"],
+  "$defs": {
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "device": { "type": "string", "description": "emulator-5554, iPhone 16, chrome…" },
+        "envSection": { "type": "string", "description": "Sección del .env que este target requiere (solo se verifica)." },
+        "launch": { "type": "string", "description": "Comando a lanzar en el panel (por defecto, el `up` del servicio)." },
+        "requires": { "type": "array", "items": { "type": "string" }, "description": "Otros servicios que deben estar arriba." }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["compose", "process", "interactive", "browser"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "cwd": { "type": "string", "description": "Directorio de trabajo relativo a la raíz del repo." },
+        "up": { "type": "string", "description": "Comando para kind process/interactive." },
+        "check": { "type": "string", "description": "Comando de verificación (exit 0 = arriba)." },
+        "health": { "type": "string", "description": "URL de salud." },
+        "file": {
+          "anyOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
+          "description": "kind compose: archivo(s) de compose."
+        },
+        "service": { "type": "string", "description": "kind compose: nombre del servicio dentro del compose." },
+        "url": { "type": "string", "description": "kind browser: URL a abrir." },
+        "profile": { "type": "string", "description": "kind browser: directorio del perfil de Chrome." },
+        "targets": { "type": "object", "additionalProperties": { "$ref": "#/$defs/target" } },
+        "defaultTarget": { "type": "string" },
+        "stopMode": { "type": "string", "enum": ["wait", "fire-and-forget"] },
+        "waitMs": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
