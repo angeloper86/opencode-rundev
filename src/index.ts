@@ -22,8 +22,7 @@ interface Ctx {
 
 export default Plugin.define({
   id: "rundev",
-  async setup(raw) {
-    const ctx = raw as unknown as Ctx
+  async setup(ctx) {
 
     // ── location + manifest resolution ─────────────────────────────────────
     async function locationFor(sessionID?: string): Promise<string> {
@@ -44,12 +43,12 @@ export default Plugin.define({
       if (!loaded) {
         return {
           error:
-            `no hay manifiesto rundev para ${dir}. Corré \`/rundev init\` en este repo ` +
-            `(crea .opencode/rundev.json) o revisá que estés en la carpeta correcta.`,
+            `no rundev manifest for ${dir}. Run \`/rundev init\` in this repo ` +
+            `(it creates .opencode/rundev.json) or check that you are in the right folder.`,
         }
       }
       const problems = validate(loaded)
-      if (problems.length) return { error: `el manifiesto tiene problemas:\n- ${problems.join("\n- ")}` }
+      if (problems.length) return { error: `the manifest has problems:\n- ${problems.join("\n- ")}` }
       return loaded
     }
 
@@ -81,13 +80,13 @@ export default Plugin.define({
         const port = s.port ? `:${s.port}` : ""
         const state = s.state === "running" ? "up  " : s.state === "external" ? "ext " : s.state === "error" ? "err " : "down"
         lines.push(`  ${state} ${s.name.padEnd(12)} ${s.kind.padEnd(11)} ${s.detail}${port ? `  ${port}` : ""}`)
-        if (s.holders?.length) lines.push(`       ↳ pids en el puerto: ${s.holders.join(", ")} (no los levantó rundev)`)
+        if (s.holders?.length) lines.push(`       ↳ pids on the port: ${s.holders.join(", ")} (not started by rundev)`)
       }
       return lines.join("\n")
     }
 
     function upTable(results: E.UpResult[]): string {
-      const lines = ["rundev · resultado"]
+      const lines = ["rundev · result"]
       const icon = (a: E.UpResult["action"]) =>
         a === "started" ? "ok " : a === "stopped" ? "ok " : a === "already" ? "=" : a === "failed" ? "ERR" : a === "blocked" ? "!" : "-"
       for (const r of results) {
@@ -108,12 +107,12 @@ export default Plugin.define({
         const body = JSON.stringify(s.draft, null, 2)
         let detail: string
         if (exists) {
-          detail = `ya existe ${path.relative(dir, file)} — no lo toco. Borrador detectado:\n${body}`
+          detail = `${path.relative(dir, file)} already exists — leaving it alone. Draft detected:\n${body}`
         } else {
           const fs = await import("node:fs")
           fs.mkdirSync(path.dirname(file), { recursive: true })
           fs.writeFileSync(file, `${body}\n`)
-          detail = `escribí ${path.relative(dir, file)} (borrador). Revisá los TODO y después /rundev doctor.`
+          detail = `wrote ${path.relative(dir, file)} (draft). Review the TODO entries, then run /rundev doctor.`
         }
         const notes = s.notes.length ? `\n\nPara completar:\n- ${s.notes.join("\n- ")}` : ""
         return `${detail}${notes}`
@@ -139,12 +138,12 @@ export default Plugin.define({
           const env = E.envSections(loaded.root)
           return [
             `rundev doctor · ${loaded.root}`,
-            `manifiesto: ${path.relative(loaded.root, loaded.file)}${loaded.localApplied ? " (+ rundev.local.json)" : ""}`,
-            `servicios: ${Object.keys(loaded.manifest.services).join(", ") || "(ninguno)"}`,
-            `problemas: ${problems.length ? `\n- ${problems.join("\n- ")}` : "ninguno ✔"}`,
-            `binarios: ${found.join(" · ")}`,
-            `env: ${env ? `secciones ${env.sections.join(", ") || "(ninguna)"} · activa: ${env.active ?? "ninguna"}` : "sin .env"}`,
-            `terminal: estrategia ${defaultStrategy()}`,
+            `manifest: ${path.relative(loaded.root, loaded.file)}${loaded.localApplied ? " (+ rundev.local.json)" : ""}`,
+            `services: ${Object.keys(loaded.manifest.services).join(", ") || "(ninguno)"}`,
+            `problems: ${problems.length ? `\n- ${problems.join("\n- ")}` : "ninguno ✔"}`,
+            `binaries: ${found.join(" · ")}`,
+            `env: ${env ? `sections ${env.sections.join(", ") || "(none)"} · active: ${env.active ?? "none"}` : "no .env"}`,
+            `terminal: strategy ${defaultStrategy()}`,
           ].join("\n")
         }
         case "up": {
@@ -167,7 +166,7 @@ export default Plugin.define({
         }
         case "logs": {
           const name = services[0]
-          if (!name) return "uso: /rundev logs <servicio>"
+          if (!name) return "usage: /rundev logs <service>"
           const tail = Number(flagValue(argv, "tail") ?? 40)
           return await E.logs(loaded, name, tail)
         }
@@ -177,10 +176,10 @@ export default Plugin.define({
             const info = E.envSections(loaded.root)
             return info
               ? `secciones: ${info.sections.join(", ") || "(ninguna)"}\nactiva: ${info.active ?? "(ninguna)"}`
-              : "este repo no tiene .env"
+              : "this repo has no .env"
           }
           const r = E.applyEnvSection(loaded.root, section)
-          return r.ok ? r.detail : `no pude cambiar el .env: ${r.detail}`
+          return r.ok ? r.detail : `could not change .env: ${r.detail}`
         }
         default:
           return (
@@ -194,7 +193,7 @@ export default Plugin.define({
     await ctx.command.transform((editor) => {
       editor.add({
         name: "rundev",
-        description: "Entorno de desarrollo del repo: init · up · status · down · logs · doctor · env",
+        description: "Repo dev environment: init · up · status · down · logs · doctor · env",
         execute: async ({ sessionID, prompt }: any) => {
           const argv = String(prompt?.text ?? "").trim().split(/\s+/).filter(Boolean)
           const verb = argv[0] ?? "status"
@@ -218,12 +217,12 @@ export default Plugin.define({
       options: { namespace: "rundev", codemode: true },
     }
     await ctx.tool.transform((editor) => {
-      editor.namespace({ name: "rundev", description: "Entorno de desarrollo local del repo" })
+      editor.namespace({ name: "rundev", description: "Local dev environment of the repo" })
       editor.add({
         ...toolBase,
         name: "status",
         description:
-          "Estado del entorno local: qué servicios están arriba, de quién es cada uno y qué quedó huérfano. No cambia nada.",
+          "Local environment status: what is up, who owns it, and what was left orphaned. Changes nothing.",
         input: { type: "object", properties: {}, additionalProperties: false },
         execute: async () => ({ content: await execute("status", []) }),
       })
@@ -231,17 +230,17 @@ export default Plugin.define({
         ...toolBase,
         name: "up",
         description:
-          "Levanta servicios locales que falten (idempotente). Acepta `servicios` como `app` o `app@ios`. No espera de más.",
+          "Starts missing local services (idempotent). Accepts `services` as `app` or `app@ios`. Does not over-wait.",
         input: {
           type: "object",
           properties: {
-            servicios: { type: "array", items: { type: "string" }, description: "Vacío = el default del repo" },
-            wait: { type: "number", description: "ms máximos de espera por readiness" },
+            services: { type: "array", items: { type: "string" }, description: "Empty = the repo default" },
+            wait: { type: "number", description: "max ms to wait for readiness" },
           },
           additionalProperties: false,
         },
         execute: async (input: any) => {
-          const argv = [...(input?.servicios ?? [])]
+          const argv = [...(input?.services ?? [])]
           if (input?.wait) argv.push(`--wait=${input.wait}`)
           return { content: await execute("up", argv) }
         },
@@ -249,29 +248,29 @@ export default Plugin.define({
       editor.add({
         ...toolBase,
         name: "down",
-        description: "Baja servicios que rundev levantó en este repo. Baja todo lo declarado si no se especifica nada.",
+        description: "Stops services rundev started in this repo. With no argument it stops everything declared.",
         input: {
           type: "object",
-          properties: { servicios: { type: "array", items: { type: "string" } } },
+          properties: { services: { type: "array", items: { type: "string" } } },
           additionalProperties: false,
         },
-        execute: async (input: any) => ({ content: await execute("down", input?.servicios ?? []) }),
+        execute: async (input: any) => ({ content: await execute("down", input?.services ?? []) }),
       })
       editor.add({
         ...toolBase,
         name: "logs",
-        description: "Últimas líneas del log de un servicio del repo.",
+        description: "Last lines of a repo service log.",
         input: {
           type: "object",
           properties: {
-            servicio: { type: "string" },
+            service: { type: "string" },
             tail: { type: "number" },
           },
-          required: ["servicio"],
+          required: ["service"],
           additionalProperties: false,
         },
         execute: async (input: any) => ({
-          content: await execute("logs", [input.servicio, ...(input.tail ? [`--tail=${input.tail}`] : [])]),
+          content: await execute("logs", [input.service, ...(input.tail ? [`--tail=${input.tail}`] : [])]),
         }),
       })
     })

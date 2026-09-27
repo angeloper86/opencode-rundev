@@ -100,9 +100,9 @@ export function scan(root: string): ScanResult {
       if (name.includes("db") || name.includes("postgres") || name.includes("mysql") || name.includes("redis")) {
         defaults.push(name)
       }
-      if (!port) notes.push(`compose/${name}: no pude leer el puerto del host → TODO`)
+      if (!port) notes.push(`compose/${name}: could not read the host port → TODO`)
     }
-    if (Object.keys(parsed).length === 0) notes.push(`no pude parsear los servicios de ${compose} → TODO`)
+    if (Object.keys(parsed).length === 0) notes.push(`could not parse services from ${compose} → TODO`)
   }
 
   // ── node / deno app server
@@ -118,18 +118,18 @@ export function scan(root: string): ScanResult {
       ...(port ? { health: `http://localhost:${port}` } : {}),
     }
     defaults.push("app")
-    if (!isVite && !port) notes.push("app: no encontré el puerto en .env → TODO")
+    if (!isVite && !port) notes.push("app: could not find the port in .env → TODO")
     if (isVite) {
       services.browser = { kind: "browser", url: "http://localhost:5173", profile: ".opencode/.chrome-profile" }
       defaults.push("browser")
-      notes.push("browser: agregar `.opencode/.chrome-profile/` al .gitignore")
+      notes.push("browser: add `.opencode/.chrome-profile/` to .gitignore")
     }
   }
   const deno = readJson(path.join(root, "deno.json")) ?? readJson(path.join(root, "deno.jsonc"))
   if (deno?.tasks?.dev && !services.app) {
     services.api = { kind: "process", up: "deno task dev", ...(envPort(root) ? { port: envPort(root) as number } : {}) }
     defaults.push("api")
-    notes.push("api: confirmá el puerto → TODO")
+    notes.push("api: confirm the port → TODO")
   }
 
   // ── flutter
@@ -140,9 +140,9 @@ export function scan(root: string): ScanResult {
       : []
     signals.flutter = { envSections: sections }
     if (sections.length) {
-      notes.push(`flutter: el .env ya trae secciones (${sections.join(", ")}); las uso como envSection de cada target`)
+      notes.push(`flutter: .env already has sections (${sections.join(", ")}); using them as envSection per target`)
     } else {
-      notes.push("flutter: si cambiás de plataforma con el .env, conviene declarar secciones → TODO")
+      notes.push("flutter: if you switch platform via .env, declare sections → TODO")
     }
     services.app = {
       kind: "interactive",
@@ -155,7 +155,7 @@ export function scan(root: string): ScanResult {
       },
     }
     defaults.unshift("app")
-    notes.push("flutter: completá el AVD/simulador real de esta máquina en rundev.local.json (o dejamelo a mí)")
+    notes.push("flutter: fill in this machine's real AVD/simulator in rundev.local.json (or leave it to me)")
   }
 
   // ── .vscode/launch.json (the historical truth)
@@ -170,6 +170,6 @@ export function scan(root: string): ScanResult {
     default: [...new Set(defaults)],
     services,
   }
-  if (Object.keys(services).length === 0) notes.push("no detecté ningún servicio: escribí el manifiesto a mano")
+  if (Object.keys(services).length === 0) notes.push("no services detected: write the manifest by hand")
   return { draft, notes, signals }
 }

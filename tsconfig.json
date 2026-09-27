@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ESNext"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/solid",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "exclude": ["src/smoke.ts", "src/harness.ts"]
+}

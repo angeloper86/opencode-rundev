@@ -1,32 +1,32 @@
 # opencode-rundev
 
-**El «Run & Debug» de VS Code, para el mundo terminal-first.**
+**The VS Code "Run & Debug" for the terminal-first world.**
 
-`rundev` levanta y baja el entorno de desarrollo de un repo desde OpenCode: contenedores, servidores
-de desarrollo, el emulador o simulador y el navegador con perfil propio del proyecto. Sin LLM en el
-medio, sin `Ctrl+F5`, sin dejar procesos huérfanos.
+`rundev` brings a repo's dev environment up and down from OpenCode — containers, dev servers, the
+emulator or simulator, and a browser with the project's own profile. No LLM in the loop, no `Ctrl+F5`,
+no orphaned processes left behind.
 
 ```sh
-/rundev up            # levanta lo que falte (idempotente, no bloqueante)
-/rundev status        # qué está arriba, de quién es y qué quedó huérfano
-/rundev down          # baja lo que rundev levantó, verifica y reporta
-/rundev init          # analiza el repo y propone el manifiesto (una vez por repo)
-/rundev logs api      # sigue los logs de un servicio
-/rundev doctor        # valida el manifiesto y el entorno
+/rundev up            # start whatever is missing (idempotent, non-blocking)
+/rundev status        # what is up, who owns it, what was left orphaned
+/rundev down          # stop what rundev started, verify, report
+/rundev init          # scan the repo and draft the manifest (once per repo)
+/rundev logs api      # follow a service log
+/rundev doctor        # validate the manifest and the environment
 ```
 
-## Por qué
+## Why
 
-Trabajar con un agente en la terminal es cómodo hasta que hay que **levantar el proyecto**:
+Working with an agent in the terminal is great until you have to **bring the project up**:
 
-- el agente improvisa: lee prosa, adivina comandos, espera de más y deja cosas colgadas;
-- lo que el agente levantó no siempre se puede bajar después;
-- abrir la app termina usando **tu** navegador, con tu sesión y tu historial.
+- the agent improvises: it reads prose, guesses commands, waits too long and leaves things hanging;
+- what the agent started cannot always be stopped later;
+- opening the app ends up using **your** browser, with your session and your history.
 
-`rundev` mueve eso a un manifiesto declarativo por repo y a un motor determinista. El agente decide
-*qué* necesita; el comando sabe *cómo* se levanta y cómo se baja.
+`rundev` moves that into a declarative per-repo manifest plus a deterministic engine. The agent
+decides *what* it needs; the command knows *how* it starts and how it stops.
 
-## Instalación
+## Install
 
 ```jsonc
 // opencode.json(c)
@@ -35,10 +35,10 @@ Trabajar con un agente en la terminal es cómodo hasta que hay que **levantar el
 }
 ```
 
-## El manifiesto: `.opencode/rundev.json`
+## The manifest: `.opencode/rundev.json`
 
-Cada servicio declara **cómo se comprueba** y **cómo se baja**. Lo que no sabe verificarse ni morir
-no entra al manifiesto.
+Every service declares **how it is checked** and **how it is stopped**. If it cannot be verified or
+stopped, it does not belong in the manifest.
 
 ```jsonc
 {
@@ -68,42 +68,49 @@ no entra al manifiesto.
 
 ### Kinds
 
-| kind | Qué es | Cómo se comprueba | Cómo se baja |
+| kind | What it is | How it is checked | How it is stopped |
 |---|---|---|---|
-| `compose` | Un servicio de `docker compose` | `docker compose ps` | `docker compose stop` (nunca `-v`) |
-| `process` | Un servidor en el host (`yarn dev`, `deno task dev`) | pidfile + `check`/`health` | SIGTERM al grupo, con verificación |
-| `browser` | Chrome con perfil del proyecto | `pgrep` por perfil | cierra solo ese perfil |
-| `interactive` | Algo que abre un panel (`flutter run`) | no verificable (no hay IPC) | el panel es tuyo |
+| `compose` | A `docker compose` service | `docker compose ps` | `docker compose stop` (never `-v`) |
+| `process` | A host server (`yarn dev`, `deno task dev`) | pidfile + `check`/`health` | SIGTERM to the group, then verify |
+| `browser` | Chrome with the project profile | `pgrep` by profile | closes only that profile |
+| `interactive` | Something that opens a panel (`flutter run`) | not verifiable (no terminal IPC) | the panel is yours |
 
-### Overrides de máquina
+### Machine overrides
 
-`.opencode/rundev.local.json` (gitignored) pisa lo que es específico de esta máquina:
+`.opencode/rundev.local.json` (gitignored) overrides what is specific to this machine:
 
 ```jsonc
 { "services": { "app": { "targets": { "android": { "device": "pixel_8_api_36" } } } } }
 ```
 
-## Reglas de la casa
+## House rules
 
-- **`up` es idempotente y no bloqueante**: arranca y sale; lo que ya está arriba no se toca.
-- **`down` solo baja lo que levantó rundev.** Un proceso tuyo ocupando el puerto se reporta, no se mata.
-- **Nunca borra volúmenes ni datos.**
-- **El `.env` solo se verifica**: si la sección activa no coincide con el target pedido, `up` se detiene
-  y te lo dice. Cambiarla es explícito (`/rundev env IOS`).
-- **El panel de terminal hereda el cwd del panel enfocado**, así que todo comando arranca con
-  `cd '<raíz-del-repo>' &&` — validado antes de tipear.
+- **`up` is idempotent and non-blocking**: it starts and returns; whatever is already up is left alone.
+- **`down` only stops what rundev started.** A process of yours holding the port is reported, never killed.
+- **It never deletes volumes or data.**
+- **`.env` is only verified**: if the active section does not match the requested target, `up` stops and
+  tells you. Switching it is explicit (`/rundev env IOS`).
+- **A terminal panel inherits the cwd of the focused panel**, so every typed command starts with
+  `cd '<repo-root>' &&` — validated before typing.
 
-## Herramientas para el agente
+## Sidebar
 
-El mismo motor se expone como herramientas, para que el agente levante lo que necesita sin gastar
-turnos adivinando: `rundev_status`, `rundev_up`, `rundev_down`, `rundev_logs`.
+The TUI plugin renders a live block in the sidebar with the repo's services and their state (from the
+engine's snapshot plus pid liveness). Reports open in a dialog; progress shows up as toasts.
 
-## Smoke test
+## Tools for the agent
+
+The same engine is exposed as tools, so the agent can start what it needs without burning turns
+guessing: `rundev_status`, `rundev_up`, `rundev_down`, `rundev_logs`.
+
+## Development
 
 ```sh
-deno run -A src/smoke.ts
+deno run -A src/smoke.ts     # engine smoke test (no docker, no keystrokes)
+npm run typecheck            # types, including the TUI JSX
+node --experimental-strip-types src/harness.ts <dir> "<verb>"   # plugin pre-flight
 ```
 
-## Estado
+## Status
 
-v0.1 — en desarrollo. Probado en macOS con Ghostty.
+v0.1 — macOS + Ghostty tested.

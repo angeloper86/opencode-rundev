@@ -90,7 +90,7 @@ export function findManifest(startDir: string): Loaded | null {
 
 export function load(root: string, file: string): Loaded {
   const raw = readJson(file) ?? { services: {} }
-  const manifest: Manifest = { services: {}, ...raw, services: { ...(raw.services ?? {}) } }
+  const manifest: Manifest = { ...raw, services: { ...(raw.services ?? {}) } }
   let localApplied = false
   const localFile = path.join(root, LOCAL_REL)
   const local = readJson(localFile)

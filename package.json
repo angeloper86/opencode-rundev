@@ -1,7 +1,7 @@
 {
   "name": "opencode-rundev",
   "version": "0.1.0",
-  "description": "Run & Debug para el mundo terminal-first: levanta y baja el entorno de desarrollo de un repo desde OpenCode, sin LLM en el medio.",
+  "description": "Run & Debug for the terminal-first world: bring a repo's dev environment up and down from OpenCode, with no LLM in the loop.",
   "type": "module",
   "license": "MIT",
   "exports": {
@@ -16,11 +16,45 @@
   "keywords": [
     "opencode",
     "opencode-plugin",
+    "opencode-tui",
     "dev-environment",
     "docker-compose",
     "rundev"
   ],
+  "engines": {
+    "opencode": ">=2.0.0"
+  },
   "dependencies": {
     "@opencode/plugin": "2.0.11"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.10",
+    "@opentui/solid": ">=0.5.10",
+    "solid-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@opencode/client": "^2.0.11",
+    "@opencode/plugin": "^2.0.11",
+    "@opencode/theme": "^2.0.11",
+    "@opentui/core": "^0.5.11",
+    "@opentui/solid": "^0.5.11",
+    "@types/node": "^26.6.3",
+    "solid-js": "1.9.12",
+    "typescript": "^7.0.2"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "smoke": "deno run -A src/smoke.ts"
   }
 }

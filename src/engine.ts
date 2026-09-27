@@ -145,8 +145,8 @@ export async function stopProcess(
   opts: { killAfterMs?: number } = {},
 ): Promise<{ ok: boolean; detail: string }> {
   const st = readProc(root, name)
-  if (!st) return { ok: true, detail: "no lo levantó rundev (nada que bajar)" }
-  if (!alive(st.pid)) return { ok: true, detail: `ya estaba muerto (pid ${st.pid})` }
+  if (!st) return { ok: true, detail: "not started by rundev (nothing to stop)" }
+  if (!alive(st.pid)) return { ok: true, detail: `already dead (pid ${st.pid})` }
 
   const signal = (sig: "SIGTERM" | "SIGKILL") => {
     try {
@@ -163,14 +163,14 @@ export async function stopProcess(
   signal("SIGTERM")
   const deadline = Date.now() + (opts.killAfterMs ?? 4_000)
   while (Date.now() < deadline) {
-    if (!alive(st.pid)) return { ok: true, detail: `detenido (pid ${st.pid})` }
+    if (!alive(st.pid)) return { ok: true, detail: `stopped (pid ${st.pid})` }
     await sleep(150)
   }
   signal("SIGKILL")
   await sleep(300)
   return alive(st.pid)
-    ? { ok: false, detail: `no murió (pid ${st.pid}) — revisalo a mano` }
-    : { ok: true, detail: `detenido a la fuerza (pid ${st.pid})` }
+    ? { ok: false, detail: `did not exit (pid ${st.pid}) — check it manually` }
+    : { ok: true, detail: `force-stopped (pid ${st.pid})` }
 }
 
 // ──────────────────────────────────────────────────────────────────── ports
@@ -201,7 +201,7 @@ export async function composeState(
     timeoutMs: 20_000,
   })
   if (r.code !== 0) {
-    return { state: "error", detail: firstLine(r.err) || "docker compose ps falló" }
+    return { state: "error", detail: firstLine(r.err) || "docker compose ps failed" }
   }
   const rows = r.out
     .split("\n")
@@ -217,7 +217,7 @@ export async function composeState(
   const row = rows.find(
     (c) => c.Service === target || c.service === target || String(c.Name ?? c.name ?? "").includes(target),
   )
-  if (!row) return { state: "stopped", detail: "contenedor inexistente" }
+  if (!row) return { state: "stopped", detail: "container does not exist" }
   const state = String(row.State ?? row.state ?? "")
   const status = String(row.Status ?? row.status ?? state)
   return state.startsWith("running") ? { state: "running", detail: status } : { state: "stopped", detail: status }
@@ -229,14 +229,14 @@ export async function composeUp(loaded: Loaded, name: string, svc: Service, wait
     cwd: serviceCwd(loaded, svc),
     timeoutMs: waitMs,
   })
-  if (r.code !== 0) return { ok: false, detail: firstLine(r.err) || "docker compose up falló" }
+  if (r.code !== 0) return { ok: false, detail: firstLine(r.err) || "docker compose up failed" }
   const deadline = Date.now() + waitMs
   while (Date.now() < deadline) {
     const st = await composeState(loaded, name, svc)
     if (st.state === "running") return { ok: true, detail: st.detail }
     await sleep(700)
   }
-  return { ok: true, detail: "arrancando (sin confirmar todavía)" }
+  return { ok: true, detail: "starting (not confirmed yet)" }
 }
 
 export async function composeStop(loaded: Loaded, name: string, svc: Service) {
@@ -246,8 +246,8 @@ export async function composeStop(loaded: Loaded, name: string, svc: Service) {
     timeoutMs: 60_000,
   })
   return r.code === 0
-    ? { ok: true, detail: "detenido (contenedor conservado)" }
-    : { ok: false, detail: firstLine(r.err) || "docker compose stop falló" }
+    ? { ok: true, detail: "stopped (container kept)" }
+    : { ok: false, detail: firstLine(r.err) || "docker compose stop failed" }
 }
 
 // ──────────────────────────────────────────────────────────────────── browser
@@ -274,13 +274,13 @@ export async function browserUp(loaded: Loaded, name: string, svc: Service) {
     { timeoutMs: 20_000 },
   )
   return r.code === 0
-    ? { ok: true, detail: `abierto ${url} (perfil ${path.relative(loaded.root, profile)})` }
-    : { ok: false, detail: firstLine(r.err) || "no se pudo abrir Chrome" }
+    ? { ok: true, detail: `opened ${url} (profile ${path.relative(loaded.root, profile)})` }
+    : { ok: false, detail: firstLine(r.err) || "could not open Chrome" }
 }
 
 export async function browserDown(loaded: Loaded, name: string, svc: Service) {
   const pids = await browserPids(loaded, svc)
-  if (pids.length === 0) return { ok: true, detail: "ya estaba cerrado" }
+  if (pids.length === 0) return { ok: true, detail: "already closed" }
   for (const pid of pids) {
     try {
       process.kill(pid, "SIGTERM")
@@ -288,7 +288,7 @@ export async function browserDown(loaded: Loaded, name: string, svc: Service) {
       /* ignore */
     }
   }
-  return { ok: true, detail: `cerrado (${pids.length} proceso(s))` }
+  return { ok: true, detail: `closed (${pids.length} process(es))` }
 }
 
 // ───────────────────────────────────────────────────────────── .env sections
@@ -332,9 +332,9 @@ export function envSections(root: string): EnvSectionInfo | null {
 /** Deterministically selects one section (comments the others). Explicit call only. */
 export function applyEnvSection(root: string, section: string): { ok: boolean; detail: string } {
   const info = envSections(root)
-  if (!info) return { ok: false, detail: "no hay .env en este repo" }
+  if (!info) return { ok: false, detail: "no .env in this repo" }
   if (!info.sections.includes(section)) {
-    return { ok: false, detail: `sección "${section}" no existe (hay: ${info.sections.join(", ") || "ninguna"})` }
+    return { ok: false, detail: `section "${section}" does not exist (found: ${info.sections.join(", ") || "none"})` }
   }
   const lines = fs.readFileSync(info.file, "utf8").split("\n")
   let current: string | null = null
@@ -356,7 +356,7 @@ export function applyEnvSection(root: string, section: string): { ok: boolean; d
     return line
   })
   fs.writeFileSync(info.file, out.join("\n"))
-  return { ok: true, detail: `sección ${section} activada en .env` }
+  return { ok: true, detail: `section ${section} enabled in .env` }
 }
 
 // ──────────────────────────────────────────────────────────────────── status
@@ -388,7 +388,7 @@ async function checkCommand(loaded: Loaded, svc: Service): Promise<boolean | nul
 
 export async function statusOf(loaded: Loaded, name: string): Promise<ServiceStatus> {
   const svc = loaded.manifest.services[name]
-  if (!svc) return { name, kind: "process", state: "error", detail: "no está en el manifiesto" }
+  if (!svc) return { name, kind: "process", state: "error", detail: "not in the manifest" }
 
   const base: ServiceStatus = { name, kind: svc.kind, state: "unknown", detail: "", port: svc.port }
 
@@ -400,7 +400,7 @@ export async function statusOf(loaded: Loaded, name: string): Promise<ServiceSta
   if (svc.kind === "browser") {
     const pids = await browserPids(loaded, svc)
     return pids.length
-      ? { ...base, state: "running", detail: `Chrome con perfil del proyecto (${pids.length} proc)`, pid: pids[0] }
+      ? { ...base, state: "running", detail: `Chrome with the project profile (${pids.length} proc)`, pid: pids[0] }
       : { ...base, state: "stopped", detail: "cerrado" }
   }
 
@@ -411,7 +411,7 @@ export async function statusOf(loaded: Loaded, name: string): Promise<ServiceSta
       return {
         ...base,
         state: "running",
-        detail: ready === false ? "proceso vivo, pero el check falla" : `pid ${st.pid}`,
+        detail: ready === false ? "process alive, but the check fails" : `pid ${st.pid}`,
         pid: st.pid,
       }
     }
@@ -420,22 +420,66 @@ export async function statusOf(loaded: Loaded, name: string): Promise<ServiceSta
       return {
         ...base,
         state: "external",
-        detail: `puerto ${svc.port} ocupado por un proceso que no levantó rundev`,
+        detail: `port ${svc.port} held by a process rundev did not start`,
         holders,
       }
     }
-    return { ...base, state: "stopped", detail: st ? `estado viejo (pid ${st.pid} muerto)` : "no lo levantó rundev" }
+    return { ...base, state: "stopped", detail: st ? `stale state (pid ${st.pid} muerto)` : "not started by rundev" }
   }
 
   // interactive
   const st = readProc(loaded.root, name)
   return st
     ? { ...base, state: "running", detail: `lanzado (${new Date(st.startedAt).toLocaleTimeString()})`, pid: st.pid }
-    : { ...base, state: "unknown", detail: "no puedo verificar un panel abierto (no hay IPC del terminal)" }
+    : { ...base, state: "unknown", detail: "cannot verify an open panel (no terminal IPC)" }
 }
 
 export async function statusAll(loaded: Loaded): Promise<ServiceStatus[]> {
-  return Promise.all(Object.keys(loaded.manifest.services).map((n) => statusOf(loaded, n)))
+  const list = await Promise.all(Object.keys(loaded.manifest.services).map((n) => statusOf(loaded, n)))
+  writeSnapshot(loaded, list)
+  return list
+}
+
+// ─────────────────────────────────────────────────────────────── snapshot
+
+/** Compact status the TUI sidebar renders (and any client can read). */
+export interface Snapshot {
+  ts: number
+  root: string
+  services: Array<{
+    name: string
+    kind: Service["kind"]
+    state: State
+    detail: string
+    port?: number
+    pid?: number
+  }>
+}
+
+export function snapshotFile(root: string): string {
+  return path.join(stateDir(root), "status.json")
+}
+
+export function writeSnapshot(loaded: Loaded, list: ServiceStatus[]): void {
+  try {
+    ensureStateDir(loaded.root)
+    const snapshot: Snapshot = {
+      ts: Date.now(),
+      root: loaded.root,
+      services: list.map(({ name, kind, state, detail, port, pid }) => ({ name, kind, state, detail, port, pid })),
+    }
+    fs.writeFileSync(snapshotFile(loaded.root), JSON.stringify(snapshot, null, 2))
+  } catch {
+    /* reporting must never break the work */
+  }
+}
+
+export function readSnapshot(root: string): Snapshot | null {
+  try {
+    return JSON.parse(fs.readFileSync(snapshotFile(root), "utf8"))
+  } catch {
+    return null
+  }
 }
 
 // ───────────────────────────────────────────────────────────────── up / down
@@ -478,10 +522,10 @@ export function launchPlan(loaded: Loaded, name: string, svc: Service, targetNam
   const cwd = serviceCwd(loaded, svc)
   const resolved = svc.targets ? resolveTarget(svc, targetName) : null
   if (svc.targets && !resolved) {
-    return { error: `target "${targetName}" no existe (hay: ${Object.keys(svc.targets).join(", ")})` }
+    return { error: `target "${targetName}" does not exist (found: ${Object.keys(svc.targets).join(", ")})` }
   }
   const command = resolved?.target.launch ?? svc.up
-  if (!command) return { error: `${name}: no hay comando de lanzamiento` }
+  if (!command) return { error: `${name}: no launch command` }
 
   let envWarning: string | undefined
   const section = resolved?.target.envSection
@@ -489,8 +533,8 @@ export function launchPlan(loaded: Loaded, name: string, svc: Service, targetNam
     const info = envSections(cwd)
     if (info && info.sections.length > 0 && info.active !== section) {
       envWarning =
-        `el .env tiene activa la sección ${info.active ?? "(ninguna)"} y este target pide ${section} — ` +
-        `cambiala antes de lanzar (o pedime que lo haga: /rundev env ${section})`
+        `the .env has section ${info.active ?? "(none)"} active and this target needs ${section} — ` +
+        `switch it before launching (or ask me: /rundev env ${section})`
     }
   }
   const label = `${path.basename(cwd)}${resolved ? ` · ${resolved.name}` : ""}`
@@ -507,18 +551,18 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
   for (const name of names) {
     const svc = loaded.manifest.services[name]
     if (!svc) {
-      results.push({ name, action: "failed", detail: "no está en el manifiesto" })
+      results.push({ name, action: "failed", detail: "not in the manifest" })
       continue
     }
     const st = await statusOf(loaded, name)
     if (st.state === "running") {
-      emitEv({ type: "event", level: "ok", service: name, message: `ya estaba arriba · ${st.detail}` })
+      emitEv({ type: "event", level: "ok", service: name, message: `already up · ${st.detail}` })
       results.push({ name, action: "already", detail: st.detail })
       continue
     }
 
     if (svc.kind === "compose") {
-      emitEv({ type: "event", level: "info", service: name, message: "arrancando contenedor…" })
+      emitEv({ type: "event", level: "info", service: name, message: "starting container…" })
       const r = await composeUp(loaded, name, svc, opts.waitMs ?? 60_000)
       emitEv({
         type: "event",
@@ -532,7 +576,7 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
 
     if (svc.kind === "process") {
       const st2 = startProcess(loaded.root, name, svc.up as string, serviceCwd(loaded, svc))
-      emitEv({ type: "event", level: "info", service: name, message: `arrancando · pid ${st2.pid}` })
+      emitEv({ type: "event", level: "info", service: name, message: `starting · pid ${st2.pid}` })
       let detail = `pid ${st2.pid}`
       const waitMs = opts.waitMs ?? 10_000
       if (waitMs > 0) {
@@ -540,7 +584,7 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
         while (Date.now() < deadline) {
           const ready = await checkCommand(loaded, svc)
           if (ready === true) {
-            detail = `pid ${st2.pid} · listo`
+            detail = `pid ${st2.pid} · ready`
             break
           }
           if (ready === null) break
@@ -589,14 +633,14 @@ export async function down(loaded: Loaded, names: string[]): Promise<UpResult[]>
   for (const name of names) {
     const svc = loaded.manifest.services[name]
     if (!svc) {
-      results.push({ name, action: "failed", detail: "no está en el manifiesto" })
+      results.push({ name, action: "failed", detail: "not in the manifest" })
       continue
     }
     let r: { ok: boolean; detail: string }
     if (svc.kind === "compose") r = await composeStop(loaded, name, svc)
     else if (svc.kind === "process") r = await stopProcess(loaded.root, name)
     else if (svc.kind === "browser") r = await browserDown(loaded, name, svc)
-    else r = { ok: true, detail: "el panel es tuyo: cerralo con ctrl+C" }
+    else r = { ok: true, detail: "the panel is yours: close it with ctrl+C" }
 
     emitEv({ type: "event", level: r.ok ? "ok" : "warn", service: name, message: r.detail })
     results.push({ name, action: r.ok ? "stopped" : "failed", detail: r.detail })
@@ -608,23 +652,23 @@ export async function down(loaded: Loaded, names: string[]): Promise<UpResult[]>
 
 export async function logs(loaded: Loaded, name: string, tail = 40): Promise<string> {
   const svc = loaded.manifest.services[name]
-  if (!svc) return `no está en el manifiesto`
+  if (!svc) return `not in the manifest`
   if (svc.kind === "process" || svc.kind === "interactive") {
     const st = readProc(loaded.root, name)
     const file = st?.log ?? path.join(stateDir(loaded.root), `${name}.log`)
-    if (!fs.existsSync(file)) return `sin log todavía (${path.relative(loaded.root, file)})`
+    if (!fs.existsSync(file)) return `no log yet (${path.relative(loaded.root, file)})`
     const lines = fs.readFileSync(file, "utf8").split("\n")
     const out = lines.slice(-tail).join("\n").trimEnd()
-    return out || "(el log todavía está vacío)"
+    return out || "(the log is still empty)"
   }
   if (svc.kind === "compose") {
     const r = await run("docker", composeArgs(svc, ["logs", "--tail", String(tail), svc.service ?? name]), {
       cwd: serviceCwd(loaded, svc),
       timeoutMs: 20_000,
     })
-    return (r.out + r.err).trim() || "(sin salida)"
+    return (r.out + r.err).trim() || "(no output)"
   }
-  return "este servicio no tiene logs"
+  return "this service has no logs"
 }
 
 function firstLine(s: string): string {
