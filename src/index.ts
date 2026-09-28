@@ -64,6 +64,16 @@ unknown, say so and suggest one.
 4. Only after the user approves: \`rundev_apply\` with \`manifest\` (+ \`local\` for machine values,
    \`workspace\` for members/dependencies).
 
+## Amending a manifest on request
+When the user asks for a change ("include a local Chrome profile", "add the emulator", "make the worker
+optional", "it is missing a browser"):
+1. Read the current \`.opencode/rundev.json\` (and \`rundev.local.json\`) and the facts from \`rundev_scan\`.
+2. Apply the smallest change that satisfies the request. A project browser is
+   \`{ "kind": "browser", "url": "http://localhost:<port>", "profile": ".opencode/.chrome-profile" }\`;
+   add it to \`default\` when it should open with a bare \`up\`.
+3. Write it with \`rundev_apply\` (it re-validates and refreshes the sidebar snapshot).
+4. Then \`rundev_up\` for what changed (or \`rundev_down\` + \`rundev_up\` if a running service changed).
+
 ## Workspace
 \`rundev.workspace.json\` at the parent directory:
 
@@ -197,6 +207,8 @@ export default Plugin.define({
 
       if (verb === "init") {
         const s = scan(dir)
+        const request = String(payload?.request ?? "").trim()
+        const guided = argv.includes("--guided") || request.length > 0
         // A parent directory holding member repos is a workspace, not a repo.
         if (Object.keys(s.draft.services).length === 0) {
           const members = membersWithManifest(dir)
@@ -273,7 +285,7 @@ export default Plugin.define({
 
         // Guided pass: hand the deterministic facts to the agent, which proposes the final
         // manifest, explains its choices and writes it with `rundev_apply` after approval.
-        if (argv.includes("--guided") && sessionID) {
+        if (guided && sessionID) {
           const facts = JSON.stringify(
             { root: dir, draft: s.draft, notes: s.notes, signals: s.signals, workspaceMembers: membersWithManifest(dir) },
             null,
@@ -288,6 +300,7 @@ export default Plugin.define({
               "```json",
               facts,
               "```",
+              ...(request ? ["", `What the user asked for: ${request}`] : []),
               "",
               "Rules:",
               "- Never invent ports, paths or device names. If a value is unknown, say so and suggest one.",
@@ -302,7 +315,12 @@ export default Plugin.define({
           return `${detail}${notesText}\n\nGuided pass handed to the agent — review its proposal here, then approve.`
         }
 
-        return `${detail}${notesText}`
+        return (
+          `${detail}${notesText}\n\n` +
+          "Want the agent to review and complete this, or to include something specific?\n" +
+          "  /rundev init --guided\n" +
+          "  /rundev init --guided include a local Chrome profile that opens with the app"
+        )
       }
 
       if (verb === "uninstall") {
@@ -538,11 +556,21 @@ export default Plugin.define({
         name: "rundev",
         description: "Repo dev environment: init · up · status · down · logs · doctor · env · uninstall",
         execute: async ({ sessionID, prompt }: any) => {
-          const argv = String(prompt?.text ?? "").trim().split(/\s+/).filter(Boolean)
+          const raw = String(prompt?.text ?? "").trim()
+          const argv = raw.split(/\s+/).filter(Boolean)
           const verb = argv[0] ?? "status"
+          // `init <free text>` (or `-m "…"`): the request travels to the agent's guided pass
+          const request =
+            verb === "init"
+              ? raw
+                  .slice(raw.indexOf("init") + 4)
+                  .replace(/(^|\s)(--guided|--all|-m)(?=\s|$)/g, " ")
+                  .trim()
+                  .replace(/^["']|["']$/g, "")
+              : ""
           let report: string
           try {
-            report = await execute(verb, argv.slice(1), sessionID)
+            report = await execute(verb, argv.slice(1), sessionID, request ? { request } : undefined)
           } catch (err) {
             report = `rundev failed: ${(err as Error).message}`
           }

@@ -71,6 +71,28 @@ function parseCompose(text: string): Record<string, { image?: string; ports: str
   return services
 }
 
+/** Registers the project browser once (vite, or a web server in compose). */
+function addBrowser(
+  root: string,
+  url: string,
+  services: Record<string, Service>,
+  defaults: string[],
+  notes: string[],
+) {
+  if (services.browser) return
+  services.browser = { kind: "browser", url, profile: ".opencode/.chrome-profile" }
+  defaults.push("browser")
+  if (ensureGitignored(root, ".opencode/.chrome-profile/")) {
+    notes.push("browser: added `.opencode/.chrome-profile/` to .gitignore")
+  }
+}
+
+/** Compose services that are tooling, not the app you open in a browser. */
+const TOOL_SERVICES = /phpmyadmin|adminer|mailhog|mailpit|minio|redis|mysql|mariadb|postgres|mongo|elastic|kibana|grafana|rabbit/i
+/** Compose services that usually serve the app. */
+const WEB_SERVICES = /nginx|apache|caddy|httpd|web|app|frontend|site|proxy/i
+const HTTP_PORTS = new Set([80, 443, 3000, 4200, 5000, 5173, 8000, 8080, 8081, 8888])
+
 function envPort(root: string): number | null {
   const file = path.join(root, ".env")
   if (!fs.existsSync(file)) return null
@@ -123,6 +145,9 @@ export function scan(root: string): ScanResult {
   const signals: Record<string, unknown> = {}
   const defaults: string[] = []
   let draftDefault: string[] | null = null
+  let viteUrl: string | null = null
+  let composeWebUrl: string | null = null
+  let vscodeUrl: string | null = null
 
   // ── docker compose
   const compose = COMPOSE_NAMES.find((f) => fs.existsSync(path.join(root, f)))
@@ -139,6 +164,15 @@ export function scan(root: string): ScanResult {
       }
       if (name.includes("db") || name.includes("postgres") || name.includes("mysql") || name.includes("redis")) {
         defaults.push(name)
+      }
+      // the app you open in a browser: a web server (nginx, apache…) that is not tooling
+      if (
+        !TOOL_SERVICES.test(name) &&
+        (WEB_SERVICES.test(name) || (port && HTTP_PORTS.has(port)))
+      ) {
+        if (!composeWebUrl) {
+          composeWebUrl = !port || port === 80 || port === 443 ? "http://localhost" : `http://localhost:${port}`
+        }
       }
       if (!port) notes.push(`compose/${name}: could not read the host port → TODO`)
     }
@@ -163,11 +197,7 @@ export function scan(root: string): ScanResult {
     )
     if (!isVite && !port) notes.push("app: could not find the port in .env → TODO")
     if (isVite) {
-      services.browser = { kind: "browser", url: "http://localhost:5173", profile: ".opencode/.chrome-profile" }
-      defaults.push("browser")
-      if (ensureGitignored(root, ".opencode/.chrome-profile/")) {
-        notes.push("browser: added `.opencode/.chrome-profile/` to .gitignore")
-      }
+      viteUrl = "http://localhost:5173"
     }
   }
   const deno = readJson(path.join(root, "deno.json")) ?? readJson(path.join(root, "deno.jsonc"))
@@ -223,8 +253,16 @@ export function scan(root: string): ScanResult {
   const launch = readJson(path.join(root, ".vscode", "launch.json"))
   if (launch?.configurations) {
     const urls = (launch.configurations as any[]).map((c) => c?.url).filter(Boolean)
-    if (urls.length) signals.vscodeChromeUrl = urls
+    if (urls.length) {
+      signals.vscodeChromeUrl = urls
+      // what VS Code was opening is the best guess for the project browser (local URLs only)
+      vscodeUrl = urls.find((u: string) => /localhost|127\.0\.0\.1|\.local\b|\.test\b|local\./i.test(u)) ?? null
+    }
   }
+
+  // one project browser: VS Code's URL wins, then the compose web server, then vite
+  const browserUrl = vscodeUrl ?? composeWebUrl ?? viteUrl
+  if (browserUrl) addBrowser(root, browserUrl, services, defaults, notes)
 
   const draft: Manifest = {
     version: 1,
