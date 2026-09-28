@@ -210,18 +210,13 @@ export function scan(root: string): ScanResult {
       },
     }
     if (hasAndroid) {
-      services.emulator = { kind: "emulator", avd: "TODO (e.g. pixel_8_api_36)", waitMs: 180_000 }
-      notes.push("emulator: set the real AVD name (see `flutter emulators`) → TODO")
+      services.emulator = { kind: "emulator", avd: "TODO (detected at init)", waitMs: 180_000 }
     }
     if (hasIos) {
-      services.simulator = { kind: "simulator", device: "TODO (e.g. iPhone 16)", waitMs: 90_000 }
-      notes.push("simulator: set the real device name (see `xcrun simctl list`) → TODO")
+      services.simulator = { kind: "simulator", device: "TODO (detected at init)", waitMs: 90_000 }
     }
     defaults.unshift("app")
     draftDefault = ["app"] // `app` pulls its device (emulator/simulator) through `requires`
-    notes.push(
-      "flutter: fill in this machine's real AVD/simulator in rundev.local.json (or leave it to me)",
-    )
   }
 
   // ── .vscode/launch.json (the historical truth)

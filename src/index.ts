@@ -132,7 +132,9 @@ export default Plugin.define({
           const avds = await E.detectAvds()
           if (avds.length) {
             patch.services.emulator = { avd: avds[0] }
-            notes.push(`emulator.avd = ${avds[0]}${avds.length > 1 ? ` (others detected: ${avds.slice(1).join(", ")})` : ""}`)
+            notes.push(
+              `emulator.avd = ${avds[0]}${avds.length > 1 ? ` (others detected: ${avds.slice(1).join(", ")})` : ""}`,
+            )
           } else {
             notes.push("no AVD detected (`flutter emulators`) — set emulator.avd by hand")
           }
