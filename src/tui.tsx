@@ -138,7 +138,7 @@ export default Plugin.define({
         () => (
           <box flexDirection="column">
             <text fg={theme.text.base}>
-              <b>{`RUNDEV - ${picker()?.title ?? ""}`}</b>
+              <b>{`  RUNDEV - ${picker()?.title ?? ""}`}</b>
             </text>
             <text fg={theme.text.muted}>{` `}</text>
             <text
@@ -150,10 +150,15 @@ export default Plugin.define({
                 const focused = () => i() === cursor()
                 const mark = () => (checked().has(row.name) ? "[x]" : "[ ]")
                 return (
-                  <text fg={focused() ? theme.text.action.primary.base : theme.text.base}>
-                    <b>{`${focused() ? "❯" : " "} ${mark()} ${row.name.padEnd(16)}`}</b>
-                    {` ${row.detail}`}
-                  </text>
+                  <box
+                    width="100%"
+                    backgroundColor={focused() ? theme.background.action.primary.base : undefined}
+                  >
+                    <text fg={focused() ? theme.background.base : theme.text.base}>
+                      <b>{`  ${focused() ? "❯" : " "} ${mark()} ${row.name.padEnd(16)}`}</b>
+                      {` ${row.detail}`}
+                    </text>
+                  </box>
                 )
               }}
             </For>
