@@ -15,6 +15,43 @@ no orphaned processes left behind.
 /rundev doctor        # validate the manifest and the environment
 ```
 
+## Demo
+
+![rundev in action](docs/shots/hero.png)
+
+The checkbox picker on the left (space toggles, enter brings up the chosen members) next to the live
+sidebar on the right, as a sibling of OpenCode's own blocks. In the same workspace, below, the agent
+answers with `rundev_status` — no configuration was written by hand.
+
+<details>
+<summary><b>More screenshots</b> (sidebar · report · picker)</summary>
+
+### Sidebar
+
+![Sidebar](docs/shots/sidebar.png)
+
+One block per repo, only the repos with something running, every service with its port and state.
+Inside a repo it collapses to that repo's own services.
+
+### Report
+
+![Report dialog](docs/shots/report.png)
+
+Every verb reports the same way, and the report is also mirrored into the transcript as a shell
+message, so the model reads it as context.
+
+### Picker
+
+![Picker](docs/shots/picker.png)
+
+</details>
+
+All screenshots come from a **throwaway workspace**, never from a real project: `docs/demo/setup.sh`
+builds three fake repos in `/tmp` whose services are `sleep` processes (so the pids and the liveness
+in the sidebar are real), and `docs/demo.tape` records them with [vhs](https://github.com/charmbracelet/vhs).
+
+![Full flow](docs/shots/demo.gif)
+
 ## Why
 
 Working with an agent in the terminal is great until you have to **bring the project up**:
