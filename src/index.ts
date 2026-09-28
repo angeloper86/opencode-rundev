@@ -8,7 +8,17 @@
 
 import { Plugin } from "@opencode/plugin"
 import path from "node:path"
-import { defaultSet, findManifest, validate, type Loaded } from "./manifest.ts"
+import {
+  defaultSet,
+  findManifest,
+  findWorkspace,
+  membersWithManifest,
+  validate,
+  workspaceMembers,
+  WORKSPACE_REL,
+  type Loaded,
+  type LoadedWorkspace,
+} from "./manifest.ts"
 import * as E from "./engine.ts"
 import { scan } from "./scan.ts"
 import { defaultStrategy, openPanel, type TerminalStrategy } from "./terminal.ts"
@@ -77,8 +87,8 @@ export default Plugin.define({
     }
 
     // ── reports ────────────────────────────────────────────────────────────
-    function statusTable(loaded: Loaded, list: E.ServiceStatus[]): string {
-      const lines = [`rundev · ${path.basename(loaded.root)}`]
+    function statusTable(loaded: Loaded, list: E.ServiceStatus[], withHeader = true): string {
+      const lines = withHeader ? [`rundev · ${path.basename(loaded.root)}`] : []
       const icon = (s: E.ServiceStatus) =>
         s.state === "running"
           ? "●"
@@ -99,23 +109,55 @@ export default Plugin.define({
       return lines.join("\n")
     }
 
+    function resultIcon(action: E.UpResult["action"]): string {
+      return action === "started" || action === "stopped"
+        ? "ok "
+        : action === "already"
+          ? "=  "
+          : action === "failed"
+            ? "ERR"
+            : action === "blocked"
+              ? "!  "
+              : "-  "
+    }
+
+    function resultLine(r: E.UpResult): string {
+      return `  ${resultIcon(r.action)} ${r.name.padEnd(12)} ${r.action.padEnd(8)} ${r.detail}`
+    }
+
     function upTable(results: E.UpResult[]): string {
-      const lines = ["rundev · result"]
-      const icon = (a: E.UpResult["action"]) =>
-        a === "started" ? "ok " : a === "stopped" ? "ok " : a === "already" ? "=" : a === "failed" ? "ERR" : a === "blocked" ? "!" : "-"
-      for (const r of results) {
-        lines.push(`  ${icon(r.action)} ${r.name.padEnd(12)} ${r.action.padEnd(8)} ${r.detail}`)
-      }
-      return lines.join("\n")
+      return ["rundev · result", ...results.map(resultLine)].join("\n")
     }
 
     // ── one entry point for command + tools ────────────────────────────────
     async function execute(verb: string, argv: string[], sessionID?: string): Promise<string> {
       const dir = await locationFor(sessionID)
-      const { services, targets } = parseArgs(argv)
+      const { services, targets, flags } = parseArgs(argv)
 
       if (verb === "init") {
         const s = scan(dir)
+        // A parent directory holding member repos is a workspace, not a repo.
+        if (Object.keys(s.draft.services).length === 0) {
+          const members = membersWithManifest(dir)
+          if (members.length > 0) {
+            const fs = await import("node:fs")
+            const wsFile = path.join(dir, WORKSPACE_REL)
+            if (fs.existsSync(wsFile)) {
+              return `${WORKSPACE_REL} already exists — leaving it alone. Members found: ${members.join(", ")}`
+            }
+            const ws = { name: path.basename(dir), members, dependencies: {} }
+            fs.writeFileSync(wsFile, `${JSON.stringify(ws, null, 2)}\n`)
+            return [
+              `no services here: this looks like a workspace of ${members.length} repos with their own manifests.`,
+              `wrote ${WORKSPACE_REL} with members: ${members.join(", ")}`,
+              "",
+              "Cross-repo dependencies are only honoured in workspace mode. Declare them like this:",
+              '  "dependencies": { "my-app": ["my-api"] }',
+              "",
+              "Then: /rundev status --all · /rundev up --all · /rundev down --all",
+            ].join("\n")
+          }
+        }
         const file = path.join(dir, ".opencode", "rundev.json")
         const exists = (await import("node:fs")).existsSync(file)
         const body = JSON.stringify(s.draft, null, 2)
@@ -205,6 +247,34 @@ export default Plugin.define({
         return lines.join("\n")
       }
 
+      // Workspace-wide operations need no manifest at the root: handle them first.
+      const ws = findWorkspace(dir)
+      if (flags.has("all") && ws && (verb === "status" || verb === "up" || verb === "down")) {
+        const members = workspaceMembers(ws)
+        if (members.length === 0) return `workspace ${path.basename(ws.root)}: no member has a manifest`
+        const t0 = Date.now()
+        const strategy = flagValue(argv, "strategy") as TerminalStrategy | undefined
+        const launchFn = async (plan: E.LaunchPlan) => {
+          const r = await openPanel({ cwd: plan.cwd, command: plan.command, label: plan.label, strategy })
+          return { ok: r.ok, detail: `${r.detail}${r.ok ? ` → ${r.line}` : ""}` }
+        }
+        const waitMs = flagValue(argv, "wait") ? Number(flagValue(argv, "wait")) : undefined
+        const lines = [`rundev · workspace ${ws.workspace.name ?? path.basename(ws.root)} (${members.length} repos)`]
+        for (const m of members) {
+          if (verb === "status") {
+            lines.push("", `  ${m.name}`, statusTable(m.loaded, await E.statusAll(m.loaded), false))
+          } else if (verb === "up") {
+            const rs = await E.up(m.loaded, defaultSet(m.loaded), { waitMs, launch: launchFn })
+            lines.push("", `  ${m.name}`, ...rs.map(resultLine))
+          } else {
+            const rs = await E.down(m.loaded, defaultSet(m.loaded))
+            lines.push("", `  ${m.name}`, ...rs.map(resultLine))
+          }
+        }
+        if (verb !== "status") lines.push("", `(${((Date.now() - t0) / 1000).toFixed(1)}s)`)
+        return lines.join("\n")
+      }
+
       const resolved = resolveManifest(dir)
       if ("error" in resolved) return resolved.error
       const loaded = resolved
@@ -248,22 +318,38 @@ export default Plugin.define({
           ].join("\n")
         }
         case "up": {
-          const names = services.length ? services : defaultSet(loaded)
           const t0 = Date.now()
-          const results = await E.up(loaded, names, {
-            waitMs: flagValue(argv, "wait") ? Number(flagValue(argv, "wait")) : undefined,
-            targets,
-            launch: async (plan) => {
-              const strategy = flagValue(argv, "strategy") as TerminalStrategy | undefined
-              const r = await openPanel({ cwd: plan.cwd, command: plan.command, label: plan.label, strategy })
-              return { ok: r.ok, detail: `${r.detail}${r.ok ? ` → ${r.line}` : ""}` }
-            },
-          })
-          return `${upTable(results)}\n\n(${((Date.now() - t0) / 1000).toFixed(1)}s)`
+          const launchFn = async (plan: E.LaunchPlan) => {
+            const strategy = flagValue(argv, "strategy") as TerminalStrategy | undefined
+            const r = await openPanel({ cwd: plan.cwd, command: plan.command, label: plan.label, strategy })
+            return { ok: r.ok, detail: `${r.detail}${r.ok ? ` → ${r.line}` : ""}` }
+          }
+          const waitMs = flagValue(argv, "wait") ? Number(flagValue(argv, "wait")) : undefined
+
+          // Workspace mode: declared dependencies of this member come up first.
+          const dependencies: string[] = []
+          if (ws) {
+            const me = path.basename(loaded.root)
+            for (const dep of ws.workspace.dependencies?.[me] ?? []) {
+              const depLoaded = findManifest(path.join(ws.root, dep))
+              if (!depLoaded) {
+                dependencies.push(`  !   ${dep.padEnd(12)} no manifest found`)
+                continue
+              }
+              E.emit(depLoaded.root, { type: "event", level: "info", message: `workspace dependency of ${me}` })
+              const rs = await E.up(depLoaded, defaultSet(depLoaded), { waitMs, launch: launchFn })
+              dependencies.push(...rs.map((r) => `  ${resultIcon(r.action)} ${`${dep}:${r.name}`.padEnd(18)} ${r.action.padEnd(8)} ${r.detail}`))
+            }
+          }
+
+          const names = services.length ? services : defaultSet(loaded)
+          const results = await E.up(loaded, names, { waitMs, targets, launch: launchFn })
+          const head = dependencies.length ? `workspace dependencies:\n${dependencies.join("\n")}\n\n` : ""
+          return `${head}${upTable(results)}\n\n(${((Date.now() - t0) / 1000).toFixed(1)}s)`
         }
         case "down": {
-          const names = services.length ? services : defaultSet(loaded)
           const t0 = Date.now()
+          const names = services.length ? services : defaultSet(loaded)
           const results = await E.down(loaded, names)
           return `${upTable(results)}\n\n(${((Date.now() - t0) / 1000).toFixed(1)}s)`
         }

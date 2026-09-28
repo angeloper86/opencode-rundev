@@ -168,6 +168,76 @@ export function quoteForTyping(value: string): string | null {
   return null
 }
 
+// ─────────────────────────────────────────────────────────────── workspace
+
+export const WORKSPACE_REL = "rundev.workspace.json"
+
+export interface Workspace {
+  name?: string
+  /** Member repo directories, relative to the workspace root. */
+  members: string[]
+  /** `member → members it needs up first` (only used in workspace mode). */
+  dependencies?: Record<string, string[]>
+}
+
+export interface LoadedWorkspace {
+  root: string
+  file: string
+  workspace: Workspace
+}
+
+/** Walks up from `startDir` looking for a `rundev.workspace.json`. */
+export function findWorkspace(startDir: string): LoadedWorkspace | null {
+  let dir = path.resolve(startDir)
+  for (let i = 0; i < 8; i++) {
+    const file = path.join(dir, WORKSPACE_REL)
+    if (fs.existsSync(file)) {
+      const raw = readJson(file)
+      if (raw) {
+        return {
+          root: dir,
+          file,
+          workspace: {
+            name: raw.name,
+            members: Array.isArray(raw.members) ? raw.members : [],
+            dependencies: raw.dependencies ?? {},
+          },
+        }
+      }
+    }
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
+}
+
+/** Workspace members that actually declare a manifest. */
+export function workspaceMembers(ws: LoadedWorkspace): Array<{ name: string; dir: string; loaded: Loaded }> {
+  const out: Array<{ name: string; dir: string; loaded: Loaded }> = []
+  for (const member of ws.workspace.members) {
+    const dir = path.resolve(ws.root, member)
+    const loaded = findManifest(dir)
+    if (loaded) out.push({ name: member, dir, loaded })
+  }
+  return out
+}
+
+/** Member directories that contain a manifest (used by `init` at a parent dir). */
+export function membersWithManifest(root: string): string[] {
+  let entries: fs.Dirent[] = []
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  return entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+    .filter((e) => fs.existsSync(path.join(root, e.name, MANIFEST_REL)))
+    .map((e) => e.name)
+    .sort()
+}
+
 /** Escapes a value for an AppleScript string. */
 export function quoteForAppleScript(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`

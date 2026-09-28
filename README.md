@@ -118,6 +118,24 @@ instructions, not modified.
 The TUI plugin renders a live block in the sidebar with the repo's services and their state (from the
 engine's snapshot plus pid liveness). Reports open in a dialog; progress shows up as toasts.
 
+## Workspace (sibling repos / monorepo)
+
+When several repos live together, each with its own manifest, drop a `rundev.workspace.json` at the
+parent (`/rundev init` there writes one for you):
+
+```jsonc
+{
+  "name": "bankyto",
+  "members": ["bankyto-api", "bankyto-admin", "bankyto_app"],
+  "dependencies": { "bankyto_app": ["bankyto-api"] }
+}
+```
+
+- `members` are only used with `--all`: `/rundev status --all`, `/rundev up --all`, `/rundev down --all`.
+- `dependencies` are only honoured **in workspace mode**: `/rundev up` inside `bankyto_app` brings
+  `bankyto-api` up first (its own default set).
+- Outside a workspace there is **no cross-repo awareness at all**: a repo only ever sees its own manifest.
+
 ## Timeline
 
 Every report is mirrored into the session as a **shell message** (`!cat …`), exactly like running a
