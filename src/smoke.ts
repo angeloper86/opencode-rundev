@@ -73,8 +73,8 @@ ok(
   typeof plan === "object" && "envWarning" in plan && Boolean((plan as E.LaunchPlan).envWarning),
   String((plan as any).envWarning ?? "").slice(0, 70),
 )
-const plan = E.launchPlan(loaded, "interactive", loaded.manifest.services.interactive, "android")
-ok("launchPlan(android) no avisa", typeof plan === "object" && !(plan as any).envWarning)
+const planAndroid = E.launchPlan(loaded, "interactive", loaded.manifest.services.interactive, "android")
+ok("launchPlan(android) no avisa", typeof planAndroid === "object" && !(planAndroid as any).envWarning)
 
 // ── requires expansion (emulator before app)
 const withReq = {
