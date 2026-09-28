@@ -1,2 +1,0 @@
-{"type":"event","level":"info","message":"checking…","seq":1,"ts":1790611493493}
-{"type":"report","title":"rundev status","text":"rundev · fixture\n  ○   sleeper     process    :45999 stopped · not started by rundev","seq":2,"ts":1790611493541}
