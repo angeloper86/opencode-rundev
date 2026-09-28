@@ -123,7 +123,7 @@ export default Plugin.define({
           const fs = await import("node:fs")
           fs.mkdirSync(path.dirname(file), { recursive: true })
           fs.writeFileSync(file, `${body}\n`)
-          detail = `wrote ${path.relative(dir, file)}. Review and adjust what the scan cannot know:\n\n${body}`
+          detail = `wrote ${path.relative(dir, file)}. Review what the scan cannot know, then commit it so it travels with the repo:\n\n${body}`
         }
         const notes = s.notes.length ? `\n\nTo complete:\n- ${s.notes.join("\n- ")}` : ""
         // light the sidebar right away (snapshot of what is already running)

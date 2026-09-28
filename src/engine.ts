@@ -453,7 +453,7 @@ export async function statusOf(loaded: Loaded, name: string): Promise<ServiceSta
         holders,
       }
     }
-    return { ...base, state: "stopped", detail: st ? `stale state (pid ${st.pid} muerto)` : "not started by rundev" }
+    return { ...base, state: "stopped", detail: st ? `pid ${st.pid} exited` : "not started by rundev" }
   }
 
   // interactive
