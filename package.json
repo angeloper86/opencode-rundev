@@ -1,6 +1,6 @@
 {
   "name": "opencode-rundev",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run & Debug for the terminal-first world: bring a repo's dev environment up and down from OpenCode — containers, dev servers, emulators — with no LLM in the loop.",
   "type": "module",
   "license": "MIT",
@@ -36,17 +36,10 @@
     "opencode": ">=2.0.0"
   },
   "dependencies": {
-    "@opencode/plugin": "^2.0.11"
-  },
-  "peerDependencies": {
-    "@opentui/core": ">=0.5.10",
-    "@opentui/solid": ">=0.5.10",
-    "solid-js": ">=1.9.0"
-  },
-  "peerDependenciesMeta": {
-    "@opentui/core": { "optional": true },
-    "@opentui/solid": { "optional": true },
-    "solid-js": { "optional": true }
+    "@opencode/plugin": "^2.0.11",
+    "@opentui/core": "^0.5.11",
+    "@opentui/solid": "^0.5.11",
+    "solid-js": "^1.9.0"
   },
   "devDependencies": {
     "@opencode/client": "^2.0.11",
