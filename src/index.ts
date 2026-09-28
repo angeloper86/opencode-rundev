@@ -114,7 +114,16 @@ export default Plugin.define({
           fs.writeFileSync(file, `${body}\n`)
           detail = `wrote ${path.relative(dir, file)} (draft). Review the TODO entries, then run /rundev doctor.`
         }
-        const notes = s.notes.length ? `\n\nPara completar:\n- ${s.notes.join("\n- ")}` : ""
+        const notes = s.notes.length ? `\n\nTo complete:\n- ${s.notes.join("\n- ")}` : ""
+        // light the sidebar right away (snapshot of what is already running)
+        const after = findManifest(dir)
+        if (after) {
+          try {
+            await E.statusAll(after)
+          } catch {
+            /* ignore */
+          }
+        }
         return `${detail}${notes}`
       }
 
