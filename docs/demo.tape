@@ -27,10 +27,10 @@ Type "status"
 Sleep 400ms
 Enter
 Sleep 2s
-Screenshot "docs/shots/01-picker.png"
+Screenshot "docs/shots/picker.png"
 Enter
 Sleep 5s
-Screenshot "docs/shots/02-report.png"
+Screenshot "docs/shots/report.png"
 Escape
 Sleep 2s
 
@@ -40,7 +40,7 @@ Sleep 55s
 
 # 3) sidebar on, then the shot with both
 Sleep 2500ms
-Screenshot "docs/shots/03-agent-sidebar.png"
+Screenshot "docs/shots/sidebar.png"
 
 # 4) /rundev up -> the checkbox picker
 Type "/rundev"
@@ -51,6 +51,6 @@ Type "up"
 Sleep 400ms
 Enter
 Sleep 2500ms
-Screenshot "docs/shots/04-up-picker.png"
+Screenshot "docs/shots/hero.png"
 Escape
 Sleep 800ms
