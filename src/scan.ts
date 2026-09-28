@@ -210,10 +210,10 @@ export function scan(root: string): ScanResult {
       },
     }
     if (hasAndroid) {
-      services.emulator = { kind: "emulator", avd: "TODO (detected at init)", waitMs: 180_000 }
+      services.emulator = { kind: "emulator", avd: "TODO (machine-specific: see rundev.local.json)", waitMs: 180_000 }
     }
     if (hasIos) {
-      services.simulator = { kind: "simulator", device: "TODO (detected at init)", waitMs: 90_000 }
+      services.simulator = { kind: "simulator", device: "TODO (machine-specific: see rundev.local.json)", waitMs: 90_000 }
     }
     defaults.unshift("app")
     draftDefault = ["app"] // `app` pulls its device (emulator/simulator) through `requires`
