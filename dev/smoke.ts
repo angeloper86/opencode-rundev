@@ -1,5 +1,5 @@
 /**
- * smoke.ts — `deno run -A src/smoke.ts`
+ * smoke.ts — `deno run -A dev/smoke.ts`
  *
  * Exercises the engine end to end against a throwaway fixture: manifest,
  * validation, .env sections, process up/status/down, kill by pidfile, and the
@@ -9,9 +9,9 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { findManifest, validate } from "./manifest.ts"
-import * as E from "./engine.ts"
-import { buildLine, defaultStrategy } from "./terminal.ts"
+import { findManifest, validate } from "../src/manifest.ts"
+import * as E from "../src/engine.ts"
+import { buildLine, defaultStrategy } from "../src/terminal.ts"
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "rundev-smoke-"))
 let fails = 0

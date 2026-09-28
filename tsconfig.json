@@ -14,5 +14,5 @@
     "types": ["node"]
   },
   "include": ["src"],
-  "exclude": ["src/smoke.ts", "src/harness.ts"]
+  "exclude": ["dev"]
 }

@@ -35,6 +35,9 @@ decides *what* it needs; the command knows *how* it starts and how it stops.
 }
 ```
 
+Requirements: OpenCode ≥ 2.0, macOS. The terminal panel strategy targets Ghostty (`shift+cmd+D` split);
+anywhere else it falls back to the clipboard / a new window.
+
 ## The manifest: `.opencode/rundev.json`
 
 Every service declares **how it is checked** and **how it is stopped**. If it cannot be verified or
@@ -151,11 +154,14 @@ guessing: `rundev_status`, `rundev_up`, `rundev_down`, `rundev_logs`.
 ## Development
 
 ```sh
-deno run -A src/smoke.ts     # engine smoke test (no docker, no keystrokes)
-npm run typecheck            # types, including the TUI JSX
-node --experimental-strip-types src/harness.ts <dir> "<verb>"   # plugin pre-flight
+npm run typecheck                                          # types, including the TUI JSX
+npm run smoke                                              # engine smoke test (no docker, no keystrokes)
+node --experimental-strip-types dev/harness.ts <dir> "<verb>"   # plugin pre-flight, no server
 ```
+
+The package ships TypeScript source (`src/`): OpenCode's plugin runtime loads it directly, the same
+way it loads `.opencode/plugins/*.ts`.
 
 ## Status
 
-v0.1 — macOS + Ghostty tested.
+v0.1 — developed and tested on macOS with Ghostty.

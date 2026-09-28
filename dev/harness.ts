@@ -1,10 +1,10 @@
 /**
  * harness.ts — dev-only. Loads the plugin with a mock context (no OpenCode
  * server) and runs one verb, so index.ts can be validated before the service
- * restart. Usage: node --experimental-strip-types src/harness.ts <dir> "<verb>"
+ * restart. Usage: node --experimental-strip-types dev/harness.ts <dir> "<verb>"
  */
 
-import plugin from "./index.ts"
+import plugin from "../src/index.ts"
 
 const dir = process.argv[2] ?? process.cwd()
 const argv = (process.argv[3] ?? "status").split(/\s+/).filter(Boolean)
