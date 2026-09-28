@@ -2,21 +2,21 @@
 /**
  * tui.tsx — the visible half of rundev.
  *
- *  - Sidebar: a live block with this repo's services and their state, so the
- *    environment is visible at a glance. Cheap checks only (snapshot + pid
- *    liveness): it never runs the engine.
- *  - Reports: the server plugin publishes one `report` event per command to
- *    `.opencode/.rundev/events.jsonl`; we show it in a dialog.
- *  - Progress: the rest of the events become toasts.
+ *  - Sidebar: live state of this repo's services (snapshot + pid liveness).
+ *  - Picker: at a workspace root, `/rundev up` opens a checkbox multi-select and
+ *    dispatches the chosen members to the server command.
+ *  - Reports open in a dialog; progress shows up as toasts.
  *
- * Read-only by design: it cannot break anything.
+ * It never runs the engine: it only reads local files and forwards commands.
  */
 
 import fs from "node:fs"
 import path from "node:path"
+import { spawn } from "node:child_process"
 import { createSignal, For } from "solid-js"
 import { Plugin } from "@opencode/plugin/tui"
 import type { Context } from "@opencode/plugin/tui/context"
+import { findManifest, findWorkspace, workspaceMembers, type Loaded } from "./manifest.ts"
 
 interface SnapService {
   name: string
@@ -33,9 +33,14 @@ interface Snap {
   services: SnapService[]
 }
 
-function readSnapshot(dir: string): Snap | null {
+interface PickerRow {
+  name: string
+  detail: string
+}
+
+function readSnapshot(root: string): Snap | null {
   try {
-    return JSON.parse(fs.readFileSync(path.join(dir, ".opencode", ".rundev", "status.json"), "utf8"))
+    return JSON.parse(fs.readFileSync(path.join(root, ".opencode", ".rundev", "status.json"), "utf8"))
   } catch {
     return null
   }
@@ -57,19 +62,97 @@ function isLive(svc: SnapService): boolean {
   return svc.state === "running"
 }
 
+/** One line describing a member's services and their last known state. */
+function describeMember(member: { name: string; loaded: Loaded }): string {
+  const snap = readSnapshot(member.loaded.root)
+  return Object.keys(member.loaded.manifest.services)
+    .map((name) => {
+      const found = snap?.services.find((s) => s.name === name)
+      const mark = found?.state === "running" ? "●" : found?.state === "unhealthy" ? "!" : "○"
+      return `${mark} ${name}`
+    })
+    .join("  ")
+}
+
 export default Plugin.define({
   id: "rundev.tui",
   setup(context: Context) {
     const dir: string = context.location?.directory ?? process.cwd()
     const eventsFile = path.join(dir, ".opencode", ".rundev", "events.jsonl")
+    const theme = context.theme
 
-    // ── live state for the sidebar (setup runs once; the render only reads)
+    // ── live state for the sidebar
     const [snap, setSnap] = createSignal<Snap | null>(readSnapshot(dir))
     const [tick, setTick] = createSignal(0)
     const poll = setInterval(() => {
       setSnap(readSnapshot(dir))
-      setTick((n) => n + 1) // re-evaluate pid liveness
+      setTick((n) => n + 1)
     }, 1500)
+
+    // ── checkbox picker (workspace members)
+    const [picker, setPicker] = createSignal<{ verb: string; title: string; rows: PickerRow[] } | null>(null)
+    const [cursor, setCursor] = createSignal(0)
+    const [checked, setChecked] = createSignal<Set<string>>(new Set())
+
+    function currentSessionID(): string | undefined {
+      try {
+        const route: any = context.ui.router.current()
+        return route.type === "session" && route.sessionID ? route.sessionID : undefined
+      } catch {
+        return undefined
+      }
+    }
+
+    /** Forwards a rundev invocation to the server command, with a CLI fallback. */
+    async function dispatch(text: string): Promise<void> {
+      const sessionID = currentSessionID()
+      if (!sessionID) {
+        context.ui.toast.show({ variant: "warning", title: "rundev", message: "open a session first", duration: 3000 })
+        return
+      }
+      try {
+        const client: any = context.client
+        const res = await client?.session?.command?.({ sessionID, name: "rundev", text })
+        if (res !== undefined) return
+      } catch {
+        /* fall through to the CLI */
+      }
+      try {
+        const child = spawn(
+          "opencode",
+          ["api", "post", `/api/session/${sessionID}/command`, "--data", JSON.stringify({ name: "rundev", text })],
+          { detached: true, stdio: "ignore" },
+        )
+        child.unref()
+      } catch {
+        context.ui.toast.show({ variant: "error", title: "rundev", message: "could not reach the server", duration: 4000 })
+      }
+    }
+
+    function openPicker(verb: string, title: string, rows: PickerRow[]): void {
+      setChecked(new Set(rows.map((r) => r.name)))
+      setCursor(0)
+      setPicker({ verb, title, rows })
+      context.ui.dialog.set({ size: "large", centered: true })
+      context.ui.dialog.show(
+        () => (
+          <box flexDirection="column" paddingLeft={1}>
+            <text fg={theme.text.base}>
+              <b>{`RUNDEV - ${title}`}</b>
+            </text>
+            <text fg={theme.text.muted}>{`space toggle · enter ${verb} · esc cancel`}</text>
+            <For each={picker()?.rows ?? []}>
+              {(row, i) => (
+                <text fg={i() === cursor() ? theme.text.action.primary.base : theme.text.base}>
+                  {`${checked().has(row.name) ? "[x]" : "[ ]"} ${row.name.padEnd(16)} ${row.detail}`}
+                </text>
+              )}
+            </For>
+          </box>
+        ),
+        () => setPicker(null),
+      )
+    }
 
     // ── reports + progress published by the server plugin
     let offset = 0
@@ -151,7 +234,6 @@ export default Plugin.define({
       render: () => {
         const s = snap()
         if (!s || s.services.length === 0) return null
-        const theme = context.theme
         return (
           <box flexDirection="column" paddingLeft={1}>
             <text fg={theme.text.base}>
@@ -173,6 +255,126 @@ export default Plugin.define({
             </For>
           </box>
         )
+      },
+    })
+
+    // ── command surface (registered from a component scope, as the keymap requires)
+    context.ui.slot({
+      append: "app",
+      render: () => {
+        // picker keys: inert unless the picker is open
+        context.keymap.layer(() => ({
+          mode: "global",
+          priority: 100,
+          commands: [
+            {
+              id: "rundev.picker.up",
+              bind: "up",
+              run: () => {
+                if (!picker()) return false
+                setCursor((n) => Math.max(0, n - 1))
+              },
+            },
+            {
+              id: "rundev.picker.down",
+              bind: "down",
+              run: () => {
+                const p = picker()
+                if (!p) return false
+                setCursor((n) => Math.min(p.rows.length - 1, n + 1))
+              },
+            },
+            {
+              id: "rundev.picker.toggle",
+              bind: "space",
+              run: () => {
+                const p = picker()
+                if (!p) return false
+                const next = new Set(checked())
+                const name = p.rows[cursor()]?.name
+                if (!name) return
+                if (next.has(name)) next.delete(name)
+                else next.add(name)
+                setChecked(next)
+              },
+            },
+            {
+              id: "rundev.picker.ok",
+              bind: "return",
+              run: () => {
+                const p = picker()
+                if (!p) return false
+                const chosen = p.rows.filter((r) => checked().has(r.name)).map((r) => r.name)
+                context.ui.dialog.clear()
+                setPicker(null)
+                if (chosen.length === 0) return
+                void dispatch(`${p.verb} ${chosen.join(" ")}`)
+              },
+            },
+            {
+              id: "rundev.picker.cancel",
+              bind: "escape",
+              run: () => {
+                if (!picker()) return false
+                context.ui.dialog.clear()
+                setPicker(null)
+              },
+            },
+          ],
+          bindings: [
+            "rundev.picker.up",
+            "rundev.picker.down",
+            "rundev.picker.toggle",
+            "rundev.picker.ok",
+            "rundev.picker.cancel",
+          ],
+        }))
+
+        // `/rundev …`: forwards to the server, or opens the picker at a workspace root
+        context.keymap.layer(() => ({
+          mode: "global",
+          priority: 10,
+          commands: [
+            {
+              id: "rundev.command",
+              title: "rundev",
+              description: "Dev environment of the repo (or pick workspace members)",
+              group: "Plugin",
+              palette: true,
+              slash: { name: "rundev", arguments: true },
+              run: (input?: string) => {
+                const text = String(input ?? "").trim()
+                const words = text.split(/\s+/).filter(Boolean)
+                const verb = words[0] || "status"
+                const rest = words.slice(1)
+                const here = context.location?.directory ?? process.cwd()
+                const ws = findWorkspace(here)
+                const atWorkspaceRoot = Boolean(ws) && !findManifest(here)
+                const members = atWorkspaceRoot && ws ? workspaceMembers(ws) : []
+                const namesMember = rest.some((r) => members.some((m) => m.name === r))
+                const wantsPicker =
+                  atWorkspaceRoot &&
+                  members.length > 0 &&
+                  ["up", "down", "status"].includes(verb) &&
+                  !namesMember &&
+                  !text.includes("--all")
+
+                if (wantsPicker) {
+                  openPicker(
+                    verb,
+                    ws!.workspace.name ?? path.basename(ws!.root),
+                    members.map((m) => ({ name: m.name, detail: describeMember(m) })),
+                  )
+                  return
+                }
+                void dispatch(text || "status")
+              },
+            },
+          ],
+          bindings: ["rundev.command"],
+        }))
+
+        return null
       },
     })
 
