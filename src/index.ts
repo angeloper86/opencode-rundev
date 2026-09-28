@@ -75,12 +75,23 @@ export default Plugin.define({
 
     // ── reports ────────────────────────────────────────────────────────────
     function statusTable(loaded: Loaded, list: E.ServiceStatus[]): string {
-      const lines = [`rundev · ${loaded.root}`]
+      const lines = [`rundev · ${path.basename(loaded.root)}`]
+      const icon = (s: E.ServiceStatus) =>
+        s.state === "running"
+          ? "●"
+          : s.state === "unhealthy"
+            ? "!"
+            : s.state === "external"
+              ? "ext"
+              : s.state === "error"
+                ? "err"
+                : "○"
       for (const s of list) {
         const port = s.port ? `:${s.port}` : ""
-        const state = s.state === "running" ? "up  " : s.state === "external" ? "ext " : s.state === "error" ? "err " : "down"
-        lines.push(`  ${state} ${s.name.padEnd(12)} ${s.kind.padEnd(11)} ${s.detail}${port ? `  ${port}` : ""}`)
-        if (s.holders?.length) lines.push(`       ↳ pids on the port: ${s.holders.join(", ")} (not started by rundev)`)
+        lines.push(
+          `  ${icon(s).padEnd(3)} ${s.name.padEnd(11)} ${s.kind.padEnd(10)} ${port.padEnd(6)} ${s.state} · ${s.detail}`,
+        )
+        if (s.holders?.length) lines.push(`      ↳ pids on the port: ${s.holders.join(", ")} (not started by rundev)`)
       }
       return lines.join("\n")
     }
@@ -107,12 +118,12 @@ export default Plugin.define({
         const body = JSON.stringify(s.draft, null, 2)
         let detail: string
         if (exists) {
-          detail = `${path.relative(dir, file)} already exists — leaving it alone. Draft detected:\n${body}`
+          detail = `${path.relative(dir, file)} already exists — leaving it alone. This is what I detect now:\n\n${body}`
         } else {
           const fs = await import("node:fs")
           fs.mkdirSync(path.dirname(file), { recursive: true })
           fs.writeFileSync(file, `${body}\n`)
-          detail = `wrote ${path.relative(dir, file)} (draft). Review the TODO entries, then run /rundev doctor.`
+          detail = `wrote ${path.relative(dir, file)}. Review and adjust what the scan cannot know:\n\n${body}`
         }
         const notes = s.notes.length ? `\n\nTo complete:\n- ${s.notes.join("\n- ")}` : ""
         // light the sidebar right away (snapshot of what is already running)
@@ -133,30 +144,45 @@ export default Plugin.define({
 
       switch (verb) {
         case "status": {
+          E.emit(loaded.root, { type: "event", level: "info", message: "checking…" })
           const list = await E.statusAll(loaded)
           return statusTable(loaded, list)
         }
         case "doctor": {
           const problems = validate(loaded)
-          const bins = ["docker", "adb", "xcrun", "osascript", "pbcopy"]
+          const svcs = Object.values(loaded.manifest.services)
+          const kinds = new Set(svcs.map((s) => s.kind))
+          const need = new Set<string>()
+          if (kinds.has("compose")) need.add("docker")
+          if (kinds.has("interactive")) {
+            need.add("osascript")
+            need.add("pbcopy")
+          }
+          const devices = svcs
+            .flatMap((s) => Object.values(s.targets ?? {}).map((t) => `${t.device ?? ""} ${t.envSection ?? ""}`))
+            .join(" ")
+            .toLowerCase()
+          if (/android|emulator|pixel/.test(devices)) need.add("adb")
+          if (/ios|iphone|ipad|simulator/.test(devices)) need.add("xcrun")
           const found: string[] = []
-          for (const b of bins) {
+          for (const b of need) {
             const r = await E.run("/usr/bin/env", ["sh", "-c", `command -v ${b}`], { timeoutMs: 5_000 })
-            found.push(`${b}: ${r.code === 0 ? r.out.trim() : "NO"}`)
+            found.push(`${b} ${r.code === 0 ? "✔" : "✗"}`)
           }
           const env = E.envSections(loaded.root)
           return [
-            `rundev doctor · ${loaded.root}`,
+            `rundev doctor · ${path.basename(loaded.root)}`,
             `manifest: ${path.relative(loaded.root, loaded.file)}${loaded.localApplied ? " (+ rundev.local.json)" : ""}`,
-            `services: ${Object.keys(loaded.manifest.services).join(", ") || "(ninguno)"}`,
-            `problems: ${problems.length ? `\n- ${problems.join("\n- ")}` : "ninguno ✔"}`,
-            `binaries: ${found.join(" · ")}`,
+            `services: ${Object.keys(loaded.manifest.services).join(", ") || "(none)"}`,
+            `problems: ${problems.length ? `\n- ${problems.join("\n- ")}` : "none ✔"}`,
+            `binaries: ${found.length ? found.join(" · ") : "(none needed)"}`,
             `env: ${env ? `sections ${env.sections.join(", ") || "(none)"} · active: ${env.active ?? "none"}` : "no .env"}`,
             `terminal: strategy ${defaultStrategy()}`,
           ].join("\n")
         }
         case "up": {
           const names = services.length ? services : defaultSet(loaded)
+          const t0 = Date.now()
           const results = await E.up(loaded, names, {
             waitMs: flagValue(argv, "wait") ? Number(flagValue(argv, "wait")) : undefined,
             targets,
@@ -166,12 +192,13 @@ export default Plugin.define({
               return { ok: r.ok, detail: `${r.detail}${r.ok ? ` → ${r.line}` : ""}` }
             },
           })
-          return upTable(results)
+          return `${upTable(results)}\n\n(${((Date.now() - t0) / 1000).toFixed(1)}s)`
         }
         case "down": {
           const names = services.length ? services : defaultSet(loaded)
+          const t0 = Date.now()
           const results = await E.down(loaded, names)
-          return upTable(results)
+          return `${upTable(results)}\n\n(${((Date.now() - t0) / 1000).toFixed(1)}s)`
         }
         case "logs": {
           const name = services[0]

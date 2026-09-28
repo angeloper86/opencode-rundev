@@ -78,6 +78,44 @@ function envPort(root: string): number | null {
   return m ? Number(m[1]) : null
 }
 
+/** Looks for a real health route in the source instead of guessing the root. */
+function findHealthPath(dir: string, depth = 3): string | null {
+  if (depth < 0) return null
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const e of entries) {
+    if (e.name === "node_modules" || e.name.startsWith(".")) continue
+    const abs = path.join(dir, e.name)
+    if (e.isDirectory()) {
+      const hit = findHealthPath(abs, depth - 1)
+      if (hit) return hit
+      continue
+    }
+    if (!/\.(ts|js|mjs)$/.test(e.name)) continue
+    try {
+      const text = fs.readFileSync(abs, "utf8")
+      if (/["'`]\/health["'`]/.test(text)) return "/health"
+    } catch {
+      /* ignore */
+    }
+  }
+  return null
+}
+
+function healthUrl(root: string, port: number): string {
+  for (const dir of ["src", "app", "server", "api", "lib"]) {
+    const abs = path.join(root, dir)
+    if (!fs.existsSync(abs)) continue
+    const hit = findHealthPath(abs)
+    if (hit) return `http://localhost:${port}${hit}`
+  }
+  return `http://localhost:${port}`
+}
+
 export function scan(root: string): ScanResult {
   const notes: string[] = []
   const services: Record<string, Service> = {}
@@ -115,9 +153,10 @@ export function scan(root: string): ScanResult {
       kind: "process",
       up: isVite ? "yarn dev -- --port 5173 --strictPort" : "yarn dev",
       ...(isVite ? { port: 5173 } : port ? { port } : {}),
-      ...(port ? { health: `http://localhost:${port}` } : {}),
+      ...(port ? { health: healthUrl(root, port) } : {}),
     }
     defaults.push("app")
+    notes.push(`service "app" comes from package.json's dev script — rename it (e.g. "api") if you prefer`)
     if (!isVite && !port) notes.push("app: could not find the port in .env → TODO")
     if (isVite) {
       services.browser = { kind: "browser", url: "http://localhost:5173", profile: ".opencode/.chrome-profile" }
@@ -167,7 +206,8 @@ export function scan(root: string): ScanResult {
 
   const draft: Manifest = {
     version: 1,
-    default: [...new Set(defaults)],
+    // default = everything detected; trim it by hand if a service is optional
+    default: [...new Set([...defaults, ...Object.keys(services)])],
     services,
   }
   if (Object.keys(services).length === 0) notes.push("no services detected: write the manifest by hand")

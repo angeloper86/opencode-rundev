@@ -134,6 +134,7 @@ export default Plugin.define({
 
       if (lastReport) {
         try {
+          context.ui.dialog.set({ size: "large" })
           void context.ui.dialog.alert({
             title: String(lastReport.title ?? "rundev"),
             message: String(lastReport.text ?? ""),

@@ -361,7 +361,7 @@ export function applyEnvSection(root: string, section: string): { ok: boolean; d
 
 // ──────────────────────────────────────────────────────────────────── status
 
-export type State = "running" | "stopped" | "starting" | "external" | "unknown" | "error"
+export type State = "running" | "stopped" | "starting" | "external" | "unhealthy" | "unknown" | "error"
 
 export interface ServiceStatus {
   name: string
@@ -408,12 +408,10 @@ export async function statusOf(loaded: Loaded, name: string): Promise<ServiceSta
     const st = readProc(loaded.root, name)
     if (st && alive(st.pid)) {
       const ready = await checkCommand(loaded, svc)
-      return {
-        ...base,
-        state: "running",
-        detail: ready === false ? "process alive, but the check fails" : `pid ${st.pid}`,
-        pid: st.pid,
+      if (ready === false) {
+        return { ...base, state: "unhealthy", detail: `alive but the check fails (pid ${st.pid})`, pid: st.pid }
       }
+      return { ...base, state: "running", detail: `pid ${st.pid}`, pid: st.pid }
     }
     const holders = svc.port ? await portPids(svc.port) : []
     if (holders.length) {
@@ -547,6 +545,7 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
     emit(loaded.root, ev)
     opts.onEvent?.(ev)
   }
+  emitEv({ type: "event", level: "info", message: `up: ${names.join(", ")}` })
 
   for (const name of names) {
     const svc = loaded.manifest.services[name]
@@ -555,7 +554,11 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
       continue
     }
     const st = await statusOf(loaded, name)
-    if (st.state === "running") {
+    if (st.state === "unhealthy") {
+      // alive but not serving: recover it (we own the pidfile, so a restart is safe)
+      emitEv({ type: "event", level: "warn", service: name, message: "alive but unhealthy → restarting" })
+      await stopProcess(loaded.root, name)
+    } else if (st.state === "running") {
       emitEv({ type: "event", level: "ok", service: name, message: `already up · ${st.detail}` })
       results.push({ name, action: "already", detail: st.detail })
       continue
@@ -578,21 +581,38 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
       const st2 = startProcess(loaded.root, name, svc.up as string, serviceCwd(loaded, svc))
       emitEv({ type: "event", level: "info", service: name, message: `starting · pid ${st2.pid}` })
       let detail = `pid ${st2.pid}`
+      const wantsCheck = Boolean(svc.check || svc.health)
+      let ready = false
       const waitMs = opts.waitMs ?? 10_000
       if (waitMs > 0) {
         const deadline = Date.now() + waitMs
         while (Date.now() < deadline) {
-          const ready = await checkCommand(loaded, svc)
-          if (ready === true) {
+          const ok = await checkCommand(loaded, svc)
+          if (ok === true) {
+            ready = true
             detail = `pid ${st2.pid} · ready`
             break
           }
-          if (ready === null) break
+          if (ok === null) {
+            ready = true // nothing to verify against
+            break
+          }
           await sleep(500)
         }
+      } else {
+        ready = true
       }
-      emitEv({ type: "event", level: "ok", service: name, message: detail })
-      results.push({ name, action: "started", detail, pid: st2.pid })
+      if (wantsCheck && !ready) {
+        const tail = (await logs(loaded, name, 6)).trim()
+        detail = `pid ${st2.pid} · started but not ready — last log lines:\n${tail || "(no output yet)"}`
+      }
+      emitEv({
+        type: "event",
+        level: wantsCheck && !ready ? "error" : "ok",
+        service: name,
+        message: detail.split("\n")[0],
+      })
+      results.push({ name, action: wantsCheck && !ready ? "failed" : "started", detail, pid: st2.pid })
       continue
     }
 
@@ -623,12 +643,14 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
     results.push({ name, action: r.ok ? "started" : "failed", detail: r.detail })
   }
 
+  await statusAll(loaded) // refresh the snapshot: the sidebar must not go stale
   return results
 }
 
 export async function down(loaded: Loaded, names: string[]): Promise<UpResult[]> {
   const results: UpResult[] = []
   const emitEv = (ev: RundevEvent) => emit(loaded.root, ev)
+  emitEv({ type: "event", level: "info", message: `down: ${names.join(", ")}` })
 
   for (const name of names) {
     const svc = loaded.manifest.services[name]
@@ -645,6 +667,7 @@ export async function down(loaded: Loaded, names: string[]): Promise<UpResult[]>
     emitEv({ type: "event", level: r.ok ? "ok" : "warn", service: name, message: r.detail })
     results.push({ name, action: r.ok ? "stopped" : "failed", detail: r.detail })
   }
+  await statusAll(loaded) // refresh the snapshot: the sidebar must not go stale
   return results
 }
 
