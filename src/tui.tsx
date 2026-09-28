@@ -74,6 +74,15 @@ function describeMember(member: { name: string; loaded: Loaded }): string {
     .join("  ")
 }
 
+/** `bankyto-api` inside workspace `bankyto` → `api` (compact sidebar rows). */
+function shortMember(member: string, workspace: string): string {
+  for (const sep of ["-", "_", "."]) {
+    const prefix = `${workspace}${sep}`.toLowerCase()
+    if (member.toLowerCase().startsWith(prefix)) return member.slice(prefix.length)
+  }
+  return member
+}
+
 export default Plugin.define({
   id: "rundev.tui",
   setup(context: Context) {
@@ -84,11 +93,25 @@ export default Plugin.define({
     const highlight = theme.background.action.primary.state({ focused: true })
     const highlightBase = theme.background.action.primary.base
 
-    // ── live state for the sidebar
+    // ── live state for the sidebar: the repo, or every member at a workspace root
+    const workspace = (() => {
+      const ws = findWorkspace(dir)
+      if (!ws || findManifest(dir)) return null
+      return { name: ws.workspace.name ?? path.basename(ws.root), members: workspaceMembers(ws) }
+    })()
     const [snap, setSnap] = createSignal<Snap | null>(readSnapshot(dir))
+    const [members, setMembers] = createSignal<Array<{ name: string; services: SnapService[] }>>(
+      (workspace?.members ?? []).map((m) => ({ name: m.name, services: readSnapshot(m.loaded.root)?.services ?? [] })),
+    )
     const [tick, setTick] = createSignal(0)
     const poll = setInterval(() => {
-      setSnap(readSnapshot(dir))
+      if (workspace) {
+        setMembers(
+          workspace.members.map((m) => ({ name: m.name, services: readSnapshot(m.loaded.root)?.services ?? [] })),
+        )
+      } else {
+        setSnap(readSnapshot(dir))
+      }
       setTick((n) => n + 1)
     }, 1500)
 
@@ -267,6 +290,39 @@ export default Plugin.define({
     context.ui.slot({
       append: "sidebar.content",
       render: () => {
+        if (workspace) {
+          const rows = members()
+          if (rows.length === 0) return null
+          const width = Math.max(...rows.map((r) => shortMember(r.name, workspace.name).length))
+          return (
+            <box flexDirection="column" paddingLeft={1}>
+              <text fg={theme.text.base}>
+                <b>RUNDEV</b>
+                {` - ${workspace.name}`}
+              </text>
+              <For each={rows}>
+                {(member) => (
+                  <box flexDirection="row">
+                    <text fg={theme.text.muted}>{`${shortMember(member.name, workspace.name).padEnd(width)} `}</text>
+                    <For each={member.services}>
+                      {(svc) => {
+                        const live = () => {
+                          tick()
+                          return isLive(svc)
+                        }
+                        return (
+                          <text fg={live() ? theme.text.feedback.success.base : theme.text.muted}>
+                            {` ${live() ? "●" : "○"}${svc.name}`}
+                          </text>
+                        )
+                      }}
+                    </For>
+                  </box>
+                )}
+              </For>
+            </box>
+          )
+        }
         const s = snap()
         if (!s || s.services.length === 0) return null
         return (
