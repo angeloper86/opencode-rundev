@@ -10,7 +10,7 @@
 import { execFile, spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
-import { composeFiles, serviceCwd, type Loaded, type Service, type Target } from "./manifest.ts"
+import { composeFiles, quoteForTyping, serviceCwd, type Loaded, type Service, type Target } from "./manifest.ts"
 
 // ────────────────────────────────────────────────────────────── runtime helpers
 
@@ -688,6 +688,40 @@ export async function simulatorDown(): Promise<{ ok: boolean; detail: string }> 
     child.unref()
   }
   return { ok: true, detail: `shutdown order sent to ${booted.join(", ")}` }
+}
+
+// ─────────────────────────────────────────────────────── session timeline
+
+/** Writes the report where `cat` can pick it up for the session timeline. */
+export function writeReport(root: string, text: string): string {
+  const file = path.join(ensureStateDir(root), "last-report.txt")
+  try {
+    fs.writeFileSync(file, text)
+  } catch {
+    /* ignore */
+  }
+  return file
+}
+
+/**
+ * Mirrors the report into the session timeline as a shell message (`!cat …`),
+ * so it stays in the history and the model reads it as context — without
+ * triggering a turn, which is what `synthetic` would do.
+ */
+export function pushToTimeline(sessionID: string | undefined, root: string, text: string): void {
+  if (!sessionID) return
+  const file = writeReport(root, text)
+  const quoted = quoteForTyping(file) ?? file
+  const body = JSON.stringify({ command: `cat ${quoted}` })
+  try {
+    const child = spawn("opencode", ["api", "post", `/api/session/${sessionID}/shell`, "--data", body], {
+      detached: true,
+      stdio: "ignore",
+    })
+    child.unref()
+  } catch {
+    /* the dialog already showed it: never fail because of the mirror */
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────── status

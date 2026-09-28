@@ -118,6 +118,13 @@ instructions, not modified.
 The TUI plugin renders a live block in the sidebar with the repo's services and their state (from the
 engine's snapshot plus pid liveness). Reports open in a dialog; progress shows up as toasts.
 
+## Timeline
+
+Every report is mirrored into the session as a **shell message** (`!cat …`), exactly like running a
+command with `!` in the composer: it stays in the history and the model reads it as context, with
+**no extra model turn**. That is why `synthetic` messages are not used for this — those queue as user
+messages and would be answered in the next turn.
+
 ## Tools for the agent
 
 The same engine is exposed as tools, so the agent can start what it needs without burning turns

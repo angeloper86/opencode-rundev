@@ -1,0 +1,13 @@
+{
+  "ts": 1790611493540,
+  "root": "/Users/angeloquijano/Git/opencode-rundev/test/fixture",
+  "services": [
+    {
+      "name": "sleeper",
+      "kind": "process",
+      "state": "stopped",
+      "detail": "not started by rundev",
+      "port": 45999
+    }
+  ]
+}

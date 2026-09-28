@@ -13,6 +13,9 @@ import * as E from "./engine.ts"
 import { scan } from "./scan.ts"
 import { defaultStrategy, openPanel, type TerminalStrategy } from "./terminal.ts"
 
+/** Verbs whose report is also mirrored into the session timeline. */
+const TIMELINE_VERBS = new Set(["init", "up", "down", "status", "doctor", "env", "uninstall"])
+
 interface Ctx {
   location?: { directory?: string }
   session: { get(input: { sessionID: string }, requestOptions?: unknown): Promise<any> }
@@ -303,11 +306,14 @@ export default Plugin.define({
           } catch (err) {
             report = `rundev failed: ${(err as Error).message}`
           }
-          E.emit(await locationFor(sessionID).then((d) => findManifest(d)?.root ?? d), {
+          const root = await locationFor(sessionID).then((d) => findManifest(d)?.root ?? d)
+          E.emit(root, {
             type: "report",
             title: `rundev ${verb}`,
             text: report,
           })
+          // keep the report in the conversation too (visible history + agent context)
+          if (sessionID && TIMELINE_VERBS.has(verb)) E.pushToTimeline(sessionID, root, report)
         },
       })
     })
