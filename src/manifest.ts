@@ -1,57 +1,61 @@
 /**
- * manifest.ts — lectura y validación del manifiesto `.opencode/rundev.json`.
+ * manifest.ts — reading and validation of the `.opencode/rundev.json` manifest.
  *
- * Un manifiesto declara SERVICIOS. Cada servicio declara, como mínimo, cómo se
- * comprueba (`check`) y cómo se baja (`down`/`stop`). Si no sabe verificarse ni
- * morir, no entra al manifiesto.
+ * A manifest declares SERVICES. At minimum every service declares how it is
+ * checked (`check`) and how it is stopped (`down`/`stop`). Anything that cannot be
+ * verified or stopped does not belong in the manifest.
  */
 
 import fs from "node:fs"
 import path from "node:path"
 
-export type Kind = "compose" | "process" | "interactive" | "browser"
+export type Kind = "compose" | "process" | "interactive" | "browser" | "emulator" | "simulator"
 
 export interface Target {
-  /** Etiqueta del dispositivo (emulator-5554, iPhone 16, chrome…). */
+  /** Device label (emulator-5554, iPhone 16, chrome…). */
   device?: string
-  /** Sección del `.env` que este target requiere (ANDROID, IOS…). Solo se verifica. */
+  /** `.env` section this target requires (ANDROID, IOS…). Verified only. */
   envSection?: string
-  /** Comando a lanzar en el panel (por defecto, `up` del servicio). */
+  /** Command to launch in the panel (defaults to the service `up`). */
   launch?: string
-  /** Otros servicios que deben estar arriba. */
+  /** Other services that must be up first. */
   requires?: string[]
 }
 
 export interface Service {
   kind: Kind
-  /** Puerto TCP del servicio (verificación y reporte). */
+  /** Service TCP port (verification and reporting). */
   port?: number
-  /** Directorio de trabajo relativo a la raíz del repo (p. ej. "../bankyto-api"). */
+  /** Working directory relative to the repo root (e.g. "../bankyto-api"). */
   cwd?: string
-  /** Comando para servicios `process` / `interactive`. */
+  /** Command for `process` / `interactive` services. */
   up?: string
-  /** Comando de verificación (exit 0 = arriba). */
+  /** Check command (exit 0 = up). */
   check?: string
-  /** URL de salud (se prueba con curl si no hay `check`). */
+  /** Health URL (probed with curl when there is no `check`). */
   health?: string
-  /** Docker compose: archivo(s) y servicio. */
+  /** Docker compose: file(s) and service. */
   file?: string | string[]
   service?: string
-  /** Navegador: URL y perfil. */
+  /** emulator: AVD name (`flutter emulators`). */
+  avd?: string
+  /** simulator: device name (`xcrun simctl list`). */
+  device?: string
+  /** Browser: URL and profile. */
   url?: string
   profile?: string
-  /** Interactive: variantes por dispositivo/plataforma. */
+  /** Interactive: per-device/platform variants. */
   targets?: Record<string, Target>
   defaultTarget?: string
   /** down: "wait" (por defecto) o "fire-and-forget" (emuladores). */
   stopMode?: "wait" | "fire-and-forget"
-  /** Tiempo máximo de espera para arrancar/parar, en ms. */
+  /** Max wait for start/stop, in ms. */
   waitMs?: number
 }
 
 export interface Manifest {
   version?: number
-  /** Servicios que `up` levanta cuando no se pide ninguno. */
+  /** Services a bare `up` starts. */
   default?: string[]
   services: Record<string, Service>
 }
@@ -60,7 +64,7 @@ export interface Loaded {
   root: string
   file: string
   manifest: Manifest
-  /** Overrides de la máquina (`rundev.local.json`), ya aplicados. */
+  /** Machine overrides (`rundev.local.json`), already applied. */
   localApplied: boolean
 }
 
@@ -75,7 +79,7 @@ function readJson(file: string): any | null {
   }
 }
 
-/** Busca el manifiesto hacia arriba desde `startDir`. */
+/** Walks up from `startDir` looking for the manifest. */
 export function findManifest(startDir: string): Loaded | null {
   let dir = path.resolve(startDir)
   for (let i = 0; i < 8; i++) {
@@ -104,43 +108,45 @@ export function load(root: string, file: string): Loaded {
   return { root, file, manifest, localApplied }
 }
 
-/** Servicios que un `up` sin argumentos levanta. */
+/** Services a bare `up` starts. */
 export function defaultSet(loaded: Loaded): string[] {
   if (loaded.manifest.default?.length) return loaded.manifest.default
   return Object.keys(loaded.manifest.services)
 }
 
-/** CWD absoluto del servicio (respeta `cwd` relativo al repo). */
+/** Absolute service CWD (honours the repo-relative `cwd`). */
 export function serviceCwd(loaded: Loaded, svc: Service): string {
   return svc.cwd ? path.resolve(loaded.root, svc.cwd) : loaded.root
 }
 
-/** Archivos compose resueltos y absolutos. */
+/** Resolved, absolute compose files. */
 export function composeFiles(loaded: Loaded, svc: Service): string[] {
   const files = Array.isArray(svc.file) ? svc.file : svc.file ? [svc.file] : []
   return files.map((f) => path.resolve(serviceCwd(loaded, svc), f))
 }
 
-/** Valida el manifiesto y devuelve problemas legibles. */
+/** Validates the manifest and returns readable problems. */
 export function validate(loaded: Loaded): string[] {
   const problems: string[] = []
   const names = Object.keys(loaded.manifest.services)
-  if (names.length === 0) problems.push("no hay servicios declarados")
+  if (names.length === 0) problems.push("no services declared")
   for (const name of names) {
     const svc = loaded.manifest.services[name]
     if (!svc.kind) problems.push(`${name}: falta "kind"`)
     if (svc.kind === "compose") {
-      if (!svc.file) problems.push(`${name}: compose sin "file"`)
-      if (!svc.service) problems.push(`${name}: compose sin "service"`)
+      if (!svc.file) problems.push(`${name}: compose without "file"`)
+      if (!svc.service) problems.push(`${name}: compose without "service"`)
       for (const f of composeFiles(loaded, svc)) {
         if (!fs.existsSync(f)) problems.push(`${name}: no existe ${path.relative(loaded.root, f)}`)
       }
     }
-    if (svc.kind === "process" && !svc.up) problems.push(`${name}: process sin "up"`)
+    if (svc.kind === "process" && !svc.up) problems.push(`${name}: process without "up"`)
     if (svc.kind === "interactive" && !svc.up && !svc.targets) {
-      problems.push(`${name}: interactive sin "up" ni "targets"`)
+      problems.push(`${name}: interactive without "up" or "targets"`)
     }
-    if (svc.kind === "browser" && !svc.url && !svc.port) problems.push(`${name}: browser sin "url" ni "port"`)
+    if (svc.kind === "browser" && !svc.url && !svc.port) problems.push(`${name}: browser without "url" or "port"`)
+    if (svc.kind === "emulator" && !svc.avd) problems.push(`${name}: emulator without "avd"`)
+    if (svc.kind === "simulator" && !svc.device) problems.push(`${name}: simulator without "device"`)
     if (svc.cwd && !fs.existsSync(serviceCwd(loaded, svc))) {
       problems.push(`${name}: cwd inexistente (${svc.cwd})`)
     }
@@ -154,7 +160,7 @@ export function validate(loaded: Loaded): string[] {
   return problems
 }
 
-/** Cita un valor para tipearlo en una terminal. Devuelve null si no es seguro. */
+/** Quotes a value for typing into a terminal. Returns null when unsafe. */
 export function quoteForTyping(value: string): string | null {
   if (!value) return null
   if (!value.includes("'")) return `'${value}'`
@@ -162,7 +168,7 @@ export function quoteForTyping(value: string): string | null {
   return null
 }
 
-/** Escapa un valor para un string de AppleScript. */
+/** Escapes a value for an AppleScript string. */
 export function quoteForAppleScript(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
 }

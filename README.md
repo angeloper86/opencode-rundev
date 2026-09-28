@@ -58,10 +58,12 @@ stopped, it does not belong in the manifest.
       "kind": "interactive",
       "defaultTarget": "android",
       "targets": {
-        "android": { "device": "emulator-5554", "envSection": "ANDROID" },
-        "ios": { "device": "iPhone 16", "envSection": "IOS" }
+        "android": { "device": "emulator", "envSection": "ANDROID", "requires": ["emulator"] },
+        "ios": { "device": "simulator", "envSection": "IOS", "requires": ["simulator"] }
       }
-    }
+    },
+    "emulator": { "kind": "emulator", "avd": "pixel_8_api_36", "waitMs": 180000 },
+    "simulator": { "kind": "simulator", "device": "iPhone 16", "waitMs": 90000 }
   }
 }
 ```
@@ -74,6 +76,8 @@ stopped, it does not belong in the manifest.
 | `process` | A host server (`yarn dev`, `deno task dev`) | pidfile + `check`/`health` | SIGTERM to the group, then verify |
 | `browser` | Chrome with the project profile | `pgrep` by profile | closes only that profile |
 | `interactive` | Something that opens a panel (`flutter run`) | not verifiable (no terminal IPC) | the panel is yours |
+| `emulator` | An Android AVD | `adb devices` | `adb emu kill`, fire-and-forget (it may save a quick-boot snapshot) |
+| `simulator` | An iOS simulator | `xcrun simctl list booted` | `xcrun simctl shutdown`, fire-and-forget |
 
 ### Machine overrides
 
@@ -90,6 +94,8 @@ stopped, it does not belong in the manifest.
 - **It never deletes volumes or data.**
 - **`.env` is only verified**: if the active section does not match the requested target, `up` stops and
   tells you. Switching it is explicit (`/rundev env IOS`).
+- **`requires` orders the launch**: the app pulls its `emulator`/`simulator` first, waiting (bounded) for
+  boot before opening the panel.
 - **A terminal panel inherits the cwd of the focused panel**, so every typed command starts with
   `cd '<repo-root>' &&` — validated before typing.
 

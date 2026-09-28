@@ -122,6 +122,7 @@ export function scan(root: string): ScanResult {
   const services: Record<string, Service> = {}
   const signals: Record<string, unknown> = {}
   const defaults: string[] = []
+  let draftDefault: string[] | null = null
 
   // ── docker compose
   const compose = COMPOSE_NAMES.find((f) => fs.existsSync(path.join(root, f)))
@@ -178,6 +179,8 @@ export function scan(root: string): ScanResult {
 
   // ── flutter
   if (fs.existsSync(path.join(root, "pubspec.yaml"))) {
+    const hasAndroid = fs.existsSync(path.join(root, "android"))
+    const hasIos = fs.existsSync(path.join(root, "ios"))
     const envFile = path.join(root, ".env")
     const sections = fs.existsSync(envFile)
       ? [...fs.readFileSync(envFile, "utf8").matchAll(/^#\s*([A-Z][A-Z0-9_]*)\s*$/gm)].map((m) => m[1])
@@ -193,13 +196,32 @@ export function scan(root: string): ScanResult {
       up: "flutter run",
       defaultTarget: "android",
       targets: {
-        android: { device: "TODO (emulator-5554)", ...(sections.includes("ANDROID") ? { envSection: "ANDROID" } : {}) },
-        ios: { device: "TODO (iPhone 16)", ...(sections.includes("IOS") ? { envSection: "IOS" } : {}) },
+        android: {
+          device: "emulator",
+          ...(hasAndroid ? { requires: ["emulator"] } : {}),
+          ...(sections.includes("ANDROID") ? { envSection: "ANDROID" } : {}),
+        },
+        ios: {
+          device: "simulator",
+          ...(hasIos ? { requires: ["simulator"] } : {}),
+          ...(sections.includes("IOS") ? { envSection: "IOS" } : {}),
+        },
         web: { device: "chrome" },
       },
     }
+    if (hasAndroid) {
+      services.emulator = { kind: "emulator", avd: "TODO (e.g. pixel_8_api_36)", waitMs: 180_000 }
+      notes.push("emulator: set the real AVD name (see `flutter emulators`) → TODO")
+    }
+    if (hasIos) {
+      services.simulator = { kind: "simulator", device: "TODO (e.g. iPhone 16)", waitMs: 90_000 }
+      notes.push("simulator: set the real device name (see `xcrun simctl list`) → TODO")
+    }
     defaults.unshift("app")
-    notes.push("flutter: fill in this machine's real AVD/simulator in rundev.local.json (or leave it to me)")
+    draftDefault = ["app"] // `app` pulls its device (emulator/simulator) through `requires`
+    notes.push(
+      "flutter: fill in this machine's real AVD/simulator in rundev.local.json (or leave it to me)",
+    )
   }
 
   // ── .vscode/launch.json (the historical truth)
@@ -212,7 +234,7 @@ export function scan(root: string): ScanResult {
   const draft: Manifest = {
     version: 1,
     // default = everything detected; trim it by hand if a service is optional
-    default: [...new Set([...defaults, ...Object.keys(services)])],
+    default: draftDefault ?? [...new Set([...defaults, ...Object.keys(services)])],
     services,
   }
   if (Object.keys(services).length === 0) notes.push("no services detected: write the manifest by hand")

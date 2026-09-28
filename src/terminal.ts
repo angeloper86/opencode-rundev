@@ -60,11 +60,11 @@ async function ghosttySplit(line: string): Promise<{ ok: boolean; detail: string
   const r = await run("/usr/bin/osascript", script, { timeoutMs: 30_000 })
   if (r.code !== 0) {
     const hint = /not allowed|1002|-1719|accessibility|assistive/i.test(r.err)
-      ? "falta permiso de Accesibilidad/Automation para el proceso que ejecuta osascript"
+      ? "missing Accessibility/Automation permission for the process running osascript"
       : r.err.trim() || "osascript failed"
     return { ok: false, detail: hint }
   }
-  return { ok: true, detail: "panel abierto abajo en la ventana activa (shift+cmd+D)" }
+  return { ok: true, detail: "panel opened below in the active window (shift+cmd+D)" }
 }
 
 async function clipboard(line: string): Promise<{ ok: boolean; detail: string }> {
@@ -73,15 +73,15 @@ async function clipboard(line: string): Promise<{ ok: boolean; detail: string }>
     // pbcopy reads stdin; retry through a shell so the line can be piped
     const r2 = await run("/bin/sh", ["-lc", `printf %s ${quoteForTyping(line)} | pbcopy`], { timeoutMs: 5_000 })
     return r2.code === 0
-      ? { ok: true, detail: "comando copiado al portapapeles (cmd+D y pegar)" }
-      : { ok: false, detail: "no se pudo copiar al portapapeles" }
+      ? { ok: true, detail: "command copied to the clipboard (press cmd+D and paste)" }
+      : { ok: false, detail: "could not copy to the clipboard" }
   }
-  return { ok: true, detail: "comando copiado al portapapeles (cmd+D y pegar)" }
+  return { ok: true, detail: "command copied to the clipboard (press cmd+D and paste)" }
 }
 
 async function openWindow(line: string): Promise<{ ok: boolean; detail: string }> {
   if (process.platform !== "darwin") {
-    return { ok: false, detail: "la estrategia 'open' solo está implementada para macOS/Ghostty" }
+    return { ok: false, detail: "the 'open' strategy is only implemented for macOS/Ghostty" }
   }
   const r = await run(
     "/usr/bin/open",
@@ -89,8 +89,8 @@ async function openWindow(line: string): Promise<{ ok: boolean; detail: string }
     { timeoutMs: 20_000 },
   )
   return r.code === 0
-    ? { ok: true, detail: "ventana nueva (instancia aparte de Ghostty)" }
-    : { ok: false, detail: r.err.trim() || "no se pudo abrir la ventana" }
+    ? { ok: true, detail: "new window (separate Ghostty instance)" }
+    : { ok: false, detail: r.err.trim() || "could not open the window" }
 }
 
 export async function openPanel(req: PanelRequest): Promise<PanelResult> {
@@ -101,7 +101,7 @@ export async function openPanel(req: PanelRequest): Promise<PanelResult> {
       ok: false,
       strategy: "clipboard",
       line: "",
-      detail: `no puedo tipear con seguridad la ruta ${req.cwd} (tiene comillas); corré a mano: ${req.command}`,
+      detail: `cannot safely type the path ${req.cwd} (it contains quotes); run it by hand: ${req.command}`,
     }
   }
 

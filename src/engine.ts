@@ -390,6 +390,132 @@ export function applyEnvSection(root: string, section: string): { ok: boolean; d
   return { ok: true, detail: `section ${section} enabled in .env` }
 }
 
+// ───────────────────────────────────────────────── emulator / simulator
+
+async function adbDevices(): Promise<string[]> {
+  const r = await run("adb", ["devices"], { timeoutMs: 15_000 })
+  return r.out
+    .split("\n")
+    .slice(1)
+    .map((l) => l.split("\t")[0]?.trim() ?? "")
+    .filter((s) => s.startsWith("emulator-"))
+}
+
+export async function emulatorState(svc: Service): Promise<{ state: State; detail: string }> {
+  const devices = await adbDevices()
+  return devices.length
+    ? { state: "running", detail: devices.join(", ") }
+    : { state: "stopped", detail: "no emulator connected" }
+}
+
+/** Launches the AVD and waits (bounded) until Android reports boot completed. */
+export async function emulatorUp(
+  loaded: Loaded,
+  name: string,
+  svc: Service,
+  emitEv: (ev: RundevEvent) => void,
+): Promise<{ ok: boolean; detail: string }> {
+  const avd = svc.avd
+  if (!avd) return { ok: false, detail: "emulator service without `avd`" }
+  const already = await adbDevices()
+  if (already.length) return { ok: true, detail: `already connected (${already.join(", ")})` }
+
+  const log = path.join(ensureStateDir(loaded.root), `${name}.log`)
+  const fd = fs.openSync(log, "a")
+  const child = spawn("/bin/sh", ["-lc", `flutter emulators --launch ${avd}`], {
+    detached: true,
+    stdio: ["ignore", fd, fd],
+  })
+  child.unref()
+  fs.closeSync(fd)
+  emitEv({ type: "event", level: "info", service: name, message: `launching AVD ${avd}…` })
+
+  const waitMs = svc.waitMs ?? 180_000
+  const deadline = Date.now() + waitMs
+  let serial: string | null = null
+  while (Date.now() < deadline && !serial) {
+    serial = (await adbDevices())[0] ?? null
+    if (!serial) await sleep(1_000)
+  }
+  if (!serial) {
+    return { ok: false, detail: `AVD ${avd} did not appear in \`adb devices\` within ${waitMs / 1000}s — check the emulator window` }
+  }
+  emitEv({ type: "event", level: "info", service: name, message: `${serial} connected · waiting for boot…` })
+
+  let ticks = 0
+  while (Date.now() < deadline) {
+    const r = await run("adb", ["-s", serial, "shell", "getprop", "sys.boot_completed"], { timeoutMs: 10_000 })
+    if (r.out.trim() === "1") return { ok: true, detail: `${serial} booted (${avd})` }
+    if (++ticks % 5 === 0) {
+      emitEv({ type: "event", level: "info", service: name, message: `still booting ${serial}…` })
+    }
+    await sleep(2_000)
+  }
+  return { ok: false, detail: `${serial} did not finish booting within the wait — it usually finishes on its own` }
+}
+
+/** Fire-and-forget by design: the emulator may save a quick-boot snapshot while closing. */
+export async function emulatorDown(name: string): Promise<{ ok: boolean; detail: string }> {
+  const devices = await adbDevices()
+  if (devices.length === 0) return { ok: true, detail: "already off" }
+  for (const serial of devices) {
+    const child = spawn("/usr/bin/env", ["adb", "-s", serial, "emu", "kill"], { detached: true, stdio: "ignore" })
+    child.unref()
+  }
+  return { ok: true, detail: `kill order sent to ${devices.join(", ")} (it may take a few seconds to close)` }
+}
+
+async function bootedSimulators(): Promise<string[]> {
+  const r = await run("/usr/bin/xcrun", ["simctl", "list", "devices", "booted"], { timeoutMs: 30_000 })
+  return r.out
+    .split("\n")
+    .filter((l) => l.includes("(Booted)"))
+    .map((l) => l.split("(")[0]?.trim() ?? "")
+    .filter(Boolean)
+}
+
+export async function simulatorState(svc: Service): Promise<{ state: State; detail: string }> {
+  const booted = await bootedSimulators()
+  return booted.length
+    ? { state: "running", detail: booted.join(", ") }
+    : { state: "stopped", detail: "no simulator booted" }
+}
+
+export async function simulatorUp(
+  name: string,
+  svc: Service,
+  emitEv: (ev: RundevEvent) => void,
+): Promise<{ ok: boolean; detail: string }> {
+  const device = svc.device
+  if (!device) return { ok: false, detail: "simulator service without `device`" }
+  const booted = await bootedSimulators()
+  if (booted.length) return { ok: true, detail: `already booted (${booted.join(", ")})` }
+
+  emitEv({ type: "event", level: "info", service: name, message: `booting ${device}…` })
+  await run("/usr/bin/xcrun", ["simctl", "boot", device], { timeoutMs: 90_000 })
+  const open = spawn("/usr/bin/open", ["-a", "Simulator"], { detached: true, stdio: "ignore" })
+  open.unref()
+
+  const waitMs = svc.waitMs ?? 90_000
+  const deadline = Date.now() + waitMs
+  while (Date.now() < deadline) {
+    const now = await bootedSimulators()
+    if (now.length) return { ok: true, detail: `${now[0]} booted` }
+    await sleep(1_500)
+  }
+  return { ok: false, detail: `${device} did not boot within ${waitMs / 1000}s` }
+}
+
+export async function simulatorDown(): Promise<{ ok: boolean; detail: string }> {
+  const booted = await bootedSimulators()
+  if (booted.length === 0) return { ok: true, detail: "already shut down" }
+  for (const device of booted) {
+    const child = spawn("/usr/bin/xcrun", ["simctl", "shutdown", device], { detached: true, stdio: "ignore" })
+    child.unref()
+  }
+  return { ok: true, detail: `shutdown order sent to ${booted.join(", ")}` }
+}
+
 // ──────────────────────────────────────────────────────────────────── status
 
 export type State = "running" | "stopped" | "starting" | "external" | "unhealthy" | "unknown" | "error"
@@ -428,11 +554,21 @@ export async function statusOf(loaded: Loaded, name: string): Promise<ServiceSta
     return { ...base, state: st.state, detail: st.detail }
   }
 
+  if (svc.kind === "emulator") {
+    const st = await emulatorState(svc)
+    return { ...base, state: st.state, detail: st.detail }
+  }
+
+  if (svc.kind === "simulator") {
+    const st = await simulatorState(svc)
+    return { ...base, state: st.state, detail: st.detail }
+  }
+
   if (svc.kind === "browser") {
     const pids = await browserPids(loaded, svc)
     return pids.length
       ? { ...base, state: "running", detail: `Chrome with the project profile (${pids.length} proc)`, pid: pids[0] }
-      : { ...base, state: "stopped", detail: "cerrado" }
+      : { ...base, state: "stopped", detail: "closed" }
   }
 
   if (svc.kind === "process") {
@@ -570,6 +706,24 @@ export function launchPlan(loaded: Loaded, name: string, svc: Service, targetNam
   return { name, label, command, cwd, target: resolved?.name, envWarning }
 }
 
+/** Puts each service's target requirements before it (emulator → app). */
+export function expandRequires(loaded: Loaded, names: string[], targets: Record<string, string> = {}): string[] {
+  const out: string[] = []
+  const visit = (name: string, depth = 0) => {
+    if (depth > 4 || out.includes(name)) return
+    const svc = loaded.manifest.services[name]
+    if (!svc) {
+      out.push(name)
+      return
+    }
+    const resolved = svc.targets ? resolveTarget(svc, targets[name]) : null
+    for (const dep of resolved?.target.requires ?? []) visit(dep, depth + 1)
+    if (!out.includes(name)) out.push(name)
+  }
+  for (const name of names) visit(name)
+  return out
+}
+
 export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}): Promise<UpResult[]> {
   const results: UpResult[] = []
   const emitEv = (ev: RundevEvent) => {
@@ -578,7 +732,7 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
   }
   emitEv({ type: "event", level: "info", message: `up: ${names.join(", ")}` })
 
-  for (const name of names) {
+  for (const name of expandRequires(loaded, names, opts.targets)) {
     const svc = loaded.manifest.services[name]
     if (!svc) {
       results.push({ name, action: "failed", detail: "not in the manifest" })
@@ -654,6 +808,20 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
       continue
     }
 
+    if (svc.kind === "emulator") {
+      const r = await emulatorUp(loaded, name, svc, emitEv)
+      emitEv({ type: "event", level: r.ok ? "ok" : "error", service: name, message: r.detail })
+      results.push({ name, action: r.ok ? "started" : "failed", detail: r.detail })
+      continue
+    }
+
+    if (svc.kind === "simulator") {
+      const r = await simulatorUp(name, svc, emitEv)
+      emitEv({ type: "event", level: r.ok ? "ok" : "error", service: name, message: r.detail })
+      results.push({ name, action: r.ok ? "started" : "failed", detail: r.detail })
+      continue
+    }
+
     // interactive → the launcher decides (terminal panel or manual command)
     const plan = launchPlan(loaded, name, svc, opts.targets?.[name])
     if ("error" in plan) {
@@ -693,6 +861,8 @@ export async function down(loaded: Loaded, names: string[]): Promise<UpResult[]>
     if (svc.kind === "compose") r = await composeStop(loaded, name, svc)
     else if (svc.kind === "process") r = await stopProcess(loaded.root, name)
     else if (svc.kind === "browser") r = await browserDown(loaded, name, svc)
+    else if (svc.kind === "emulator") r = await emulatorDown(name)
+    else if (svc.kind === "simulator") r = await simulatorDown()
     else r = { ok: true, detail: "the panel is yours: close it with ctrl+C" }
 
     emitEv({ type: "event", level: r.ok ? "ok" : "warn", service: name, message: r.detail })

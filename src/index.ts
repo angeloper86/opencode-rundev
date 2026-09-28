@@ -211,7 +211,7 @@ export default Plugin.define({
           if (!section) {
             const info = E.envSections(loaded.root)
             return info
-              ? `secciones: ${info.sections.join(", ") || "(ninguna)"}\nactiva: ${info.active ?? "(ninguna)"}`
+              ? `sections: ${info.sections.join(", ") || "(none)"}\nactive: ${info.active ?? "(none)"}`
               : "this repo has no .env"
           }
           const r = E.applyEnvSection(loaded.root, section)

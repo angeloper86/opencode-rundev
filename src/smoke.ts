@@ -73,8 +73,22 @@ ok(
   typeof plan === "object" && "envWarning" in plan && Boolean((plan as E.LaunchPlan).envWarning),
   String((plan as any).envWarning ?? "").slice(0, 70),
 )
-const planAndroid = E.launchPlan(loaded, "interactive", loaded.manifest.services.interactive, "android")
-ok("launchPlan(android) no avisa", typeof planAndroid === "object" && !(planAndroid as any).envWarning)
+const plan = E.launchPlan(loaded, "interactive", loaded.manifest.services.interactive, "android")
+ok("launchPlan(android) no avisa", typeof plan === "object" && !(plan as any).envWarning)
+
+// ── requires expansion (emulator before app)
+const withReq = {
+  ...loaded,
+  manifest: {
+    default: ["app"],
+    services: {
+      app: { kind: "interactive", up: "echo", defaultTarget: "android", targets: { android: { requires: ["emulator"] } } },
+      emulator: { kind: "emulator", avd: "x" },
+    },
+  },
+} as any
+const order = E.expandRequires(withReq, ["app"])
+ok("expandRequires pone el emulador antes de la app", JSON.stringify(order) === '["emulator","app"]', JSON.stringify(order))
 
 // ── process lifecycle
 const up1 = await E.up(loaded, ["sleeper"], { waitMs: 300 })
