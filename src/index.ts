@@ -527,7 +527,7 @@ export default Plugin.define({
         default:
           return (
             `verbs: init · up · status · down · logs · doctor · env · uninstall\n` +
-            `examples:\n  /rundev up\n  /rundev up app@ios\n  /rundev down --all\n  /rundev logs api\n  /rundev uninstall --dry-run`
+            `examples:\n  /rundev init --guided   (let the agent propose the manifest)\n  /rundev up\n  /rundev up app@ios\n  /rundev down --all\n  /rundev logs api\n  /rundev uninstall --dry-run`
           )
       }
     }

@@ -137,7 +137,7 @@ export function validate(loaded: Loaded): string[] {
       if (!svc.file) problems.push(`${name}: compose without "file"`)
       if (!svc.service) problems.push(`${name}: compose without "service"`)
       for (const f of composeFiles(loaded, svc)) {
-        if (!fs.existsSync(f)) problems.push(`${name}: no existe ${path.relative(loaded.root, f)}`)
+        if (!fs.existsSync(f)) problems.push(`${name}: missing ${path.relative(loaded.root, f)}`)
       }
     }
     if (svc.kind === "process" && !svc.up) problems.push(`${name}: process without "up"`)
@@ -151,11 +151,11 @@ export function validate(loaded: Loaded): string[] {
       problems.push(`${name}: cwd inexistente (${svc.cwd})`)
     }
     for (const dep of svc.targets?.[svc.defaultTarget ?? ""]?.requires ?? []) {
-      if (!names.includes(dep)) problems.push(`${name}: requires "${dep}" no existe`)
+      if (!names.includes(dep)) problems.push(`${name}: requires "${dep}" which does not exist`)
     }
   }
   for (const dep of loaded.manifest.default ?? []) {
-    if (!names.includes(dep)) problems.push(`default: "${dep}" no existe`)
+    if (!names.includes(dep)) problems.push(`default: "${dep}" which does not exist`)
   }
   return problems
 }
