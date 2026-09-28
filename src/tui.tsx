@@ -136,18 +136,28 @@ export default Plugin.define({
       context.ui.dialog.set({ size: "large", centered: true })
       context.ui.dialog.show(
         () => (
-          <box flexDirection="column" paddingLeft={1}>
+          <box flexDirection="column">
             <text fg={theme.text.base}>
-              <b>{`RUNDEV - ${title}`}</b>
+              <b>{`RUNDEV - ${picker()?.title ?? ""}`}</b>
             </text>
-            <text fg={theme.text.muted}>{`space toggle · enter ${verb} · esc cancel`}</text>
+            <text fg={theme.text.muted}>{` `}</text>
+            <text
+              fg={theme.text.muted}
+            >{`  space toggle · enter ${picker()?.verb ?? "up"} (${checked().size} selected) · esc cancel`}</text>
+            <text fg={theme.text.muted}>{` `}</text>
             <For each={picker()?.rows ?? []}>
-              {(row, i) => (
-                <text fg={i() === cursor() ? theme.text.action.primary.base : theme.text.base}>
-                  {`${checked().has(row.name) ? "[x]" : "[ ]"} ${row.name.padEnd(16)} ${row.detail}`}
-                </text>
-              )}
+              {(row, i) => {
+                const focused = () => i() === cursor()
+                const mark = () => (checked().has(row.name) ? "[x]" : "[ ]")
+                return (
+                  <text fg={focused() ? theme.text.action.primary.base : theme.text.base}>
+                    <b>{`${focused() ? "❯" : " "} ${mark()} ${row.name.padEnd(16)}`}</b>
+                    {` ${row.detail}`}
+                  </text>
+                )
+              }}
             </For>
+            <text fg={theme.text.muted}>{` `}</text>
           </box>
         ),
         () => setPicker(null),
