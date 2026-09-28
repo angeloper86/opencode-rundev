@@ -54,6 +54,17 @@ export default Plugin.define({
     function resolveManifest(dir: string): Loaded | { error: string } {
       const loaded = findManifest(dir)
       if (!loaded) {
+        const ws = findWorkspace(dir)
+        if (ws) {
+          const members = workspaceMembers(ws)
+          return {
+            error:
+              `no manifest here, but this is workspace "${ws.workspace.name ?? path.basename(ws.root)}" ` +
+              `(${members.length} repos: ${members.map((m) => m.name).join(", ") || "none with a manifest"}).\n` +
+              `Workspace-wide: /rundev status --all · /rundev up --all · /rundev down --all\n` +
+              `Repo-scoped: open a session inside one of the member repos.`,
+          }
+        }
         return {
           error:
             `no rundev manifest for ${dir}. Run \`/rundev init\` in this repo ` +
