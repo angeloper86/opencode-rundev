@@ -80,6 +80,9 @@ export default Plugin.define({
     const dir: string = context.location?.directory ?? process.cwd()
     const eventsFile = path.join(dir, ".opencode", ".rundev", "events.jsonl")
     const theme = context.theme
+    // the theme's own accent for a focused surface (fallback: its base variant)
+    const highlight = theme.background.action.primary.state({ focused: true })
+    const highlightBase = theme.background.action.primary.base
 
     // ── live state for the sidebar
     const [snap, setSnap] = createSignal<Snap | null>(readSnapshot(dir))
@@ -157,23 +160,18 @@ export default Plugin.define({
               <b>{`  RUNDEV - ${picker()?.title ?? ""}`}</b>
             </text>
             <text fg={theme.text.muted}>{` `}</text>
-            <text
-              fg={theme.text.muted}
-            >{`  space toggle · enter ${picker()?.verb ?? "up"} (${checked().size} selected) · esc cancel`}</text>
-            <text fg={theme.text.muted}>{` `}</text>
             <For each={picker()?.rows ?? []}>
               {(row, i) => {
                 const focused = () => i() === cursor()
                 const mark = () => (checked().has(row.name) ? "[x]" : "[ ]")
-                const accent = theme.text.action.primary.base
-                // wide enough for every row, so the highlight looks like a bar
+                // wide enough for every row, so the highlight reads as a bar
                 const rowWidth = () => {
                   const rows = picker()?.rows ?? []
                   return Math.max(30, ...rows.map((r) => r.name.length + r.detail.length + 8))
                 }
                 return (
-                  <box width="100%" height={1} backgroundColor={focused() ? accent : undefined}>
-                    <text fg={focused() ? theme.background.base : theme.text.base} bg={focused() ? accent : undefined}>
+                  <box width="100%" height={1} backgroundColor={focused() ? highlightBase : undefined}>
+                    <text fg={focused() ? theme.background.base : theme.text.base} bg={focused() ? highlight : undefined}>
                       {`${focused() ? "❯" : " "} ${mark()} ${row.name.padEnd(16)} ${row.detail}`.padEnd(rowWidth())}
                     </text>
                   </box>
@@ -181,19 +179,9 @@ export default Plugin.define({
               }}
             </For>
             <text fg={theme.text.muted}>{` `}</text>
-            <box flexDirection="row">
-              <text
-                bg={theme.text.action.primary.base}
-                fg={theme.background.base}
-                on:mouseDown={confirmPicker}
-              >{`  ok  `}</text>
-              <text>{` `}</text>
-              <text
-                bg={theme.background.raised.base}
-                fg={theme.text.base}
-                on:mouseDown={cancelPicker}
-              >{`  cancel  `}</text>
-            </box>
+            <text
+              fg={theme.text.muted}
+            >{`  space toggle · enter ${picker()?.verb ?? "up"} (${checked().size} selected) · esc cancel`}</text>
             <text fg={theme.text.muted}>{` `}</text>
           </box>
         ),
