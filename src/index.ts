@@ -26,6 +26,56 @@ import { defaultStrategy, openPanel, type TerminalStrategy } from "./terminal.ts
 /** Verbs whose report is also mirrored into the session timeline. */
 const TIMELINE_VERBS = new Set(["init", "up", "down", "status", "doctor", "env", "uninstall"])
 
+/** Conventions for writing manifests, registered as a skill so any agent can follow them. */
+const MANIFEST_SKILL = `# rundev manifest
+
+How to write \`.opencode/rundev.json\` for a repo, and \`rundev.workspace.json\` for a group of repos.
+
+## Contract
+Every service declares how it is **checked** and how it is **stopped**. If it cannot be verified or
+stopped it does not belong in the manifest. Never invent ports, paths or device names: if a value is
+unknown, say so and suggest one.
+
+## Kinds
+| kind | use for | required | checked with | stopped with |
+|---|---|---|---|---|
+| \`compose\` | a docker compose service | \`file\`, \`service\` | \`docker compose ps\` | \`docker compose stop\` (never \`-v\`) |
+| \`process\` | a host server (\`yarn dev\`, \`deno task dev\`) | \`up\` | pidfile + \`check\`/\`health\` | SIGTERM to the group |
+| \`interactive\` | something that opens a terminal (\`flutter run\`) | \`up\` or \`targets\` | not verifiable | the panel is yours |
+| \`browser\` | Chrome with a project profile | \`url\` or \`port\` | pgrep by profile | closes that profile |
+| \`emulator\` | an Android AVD | \`avd\` | \`adb devices\` | \`adb emu kill\` (fire-and-forget) |
+| \`simulator\` | an iOS simulator | \`device\` | \`xcrun simctl list booted\` | \`xcrun simctl shutdown\` |
+
+## Fields worth knowing
+- \`port\`: used for reporting and for the orphan sweep. Set it whenever the service listens.
+- \`check\`: shell command, exit 0 = up. Prefer a real health route over the bare root.
+- \`health\`: URL probed with curl when there is no \`check\`.
+- \`cwd\`: only for services living in another repo (prefer workspace mode).
+- \`default\`: what a bare \`up\` starts — everything needed for a normal session.
+- \`interactive.targets\`: one entry per device/platform with \`device\`, optional \`envSection\` (the \`.env\`
+  section it requires — verified only, never written by rundev) and \`requires\` (services to bring up
+  first, e.g. the emulator).
+- \`stopMode: "fire-and-forget"\`: for services whose shutdown takes a while (emulators).
+
+## Workflow
+1. \`rundev_scan\` → the facts (draft, notes, signals, member repos).
+2. Read the repo's \`AGENTS.md\`/\`README\` for what the scan cannot know (health route, optional services).
+3. Propose the manifest, resolve every TODO, explain the non-obvious choices in a few lines.
+4. Only after the user approves: \`rundev_apply\` with \`manifest\` (+ \`local\` for machine values,
+   \`workspace\` for members/dependencies).
+
+## Workspace
+\`rundev.workspace.json\` at the parent directory:
+
+\`\`\`jsonc
+{ "name": "acme", "members": ["acme-api", "acme-app"], "dependencies": { "acme-app": ["acme-api"] } }
+\`\`\`
+
+\`members\` are only used with \`--all\` (\`status\`, \`up\`, \`down\`). \`dependencies\` are only honoured in
+workspace mode: \`up\` inside a member brings the dependency up first, in its own repo. Outside a
+workspace a repo only ever sees its own manifest.
+`
+
 interface Ctx {
   location?: { directory?: string }
   session: { get(input: { sessionID: string }, requestOptions?: unknown): Promise<any> }
@@ -141,7 +191,7 @@ export default Plugin.define({
     }
 
     // ── one entry point for command + tools ────────────────────────────────
-    async function execute(verb: string, argv: string[], sessionID?: string): Promise<string> {
+    async function execute(verb: string, argv: string[], sessionID?: string, payload?: any): Promise<string> {
       const dir = await locationFor(sessionID)
       const { services, targets, flags } = parseArgs(argv)
 
@@ -220,6 +270,38 @@ export default Plugin.define({
           }
         }
         const notesText = notes.length ? `\n\nTo complete:\n- ${notes.join("\n- ")}` : ""
+
+        // Guided pass: hand the deterministic facts to the agent, which proposes the final
+        // manifest, explains its choices and writes it with `rundev_apply` after approval.
+        if (argv.includes("--guided") && sessionID) {
+          const facts = JSON.stringify(
+            { root: dir, draft: s.draft, notes: s.notes, signals: s.signals, workspaceMembers: membersWithManifest(dir) },
+            null,
+            2,
+          )
+          await ctx.session.prompt({
+            sessionID,
+            text: [
+              "rundev guided init.",
+              "",
+              "This is the deterministic scan of the directory (facts, not prose). Review it, decide what the scan cannot know, and propose the final rundev manifest.",
+              "```json",
+              facts,
+              "```",
+              "",
+              "Rules:",
+              "- Never invent ports, paths or device names. If a value is unknown, say so and suggest one.",
+              "- Every service must declare how it is checked and how it is stopped.",
+              "- Prefer `compose` for containers, `process` for host servers, `interactive` for things that open a terminal (with `targets` + `requires`), `emulator`/`simulator` for devices.",
+              "- If there are member repos, propose `rundev.workspace.json` with `members` and only the `dependencies` you are sure about.",
+              "",
+              "Then: explain your choices in 3-5 lines (health path, what is optional, any cross-repo dependency), ask me to approve, and only after my confirmation write it with the `rundev_apply` tool (you can also pass `local` for machine values and `workspace` for the workspace file).",
+              "A draft is already on disk; `rundev_apply` overwrites it.",
+            ].join("\n"),
+          })
+          return `${detail}${notesText}\n\nGuided pass handed to the agent — review its proposal here, then approve.`
+        }
+
         return `${detail}${notesText}`
       }
 
@@ -256,6 +338,47 @@ export default Plugin.define({
         lines.push('  · remove "opencode-rundev" from the plugins list in ~/.config/opencode/opencode.json(c)')
         lines.push("  · delete ~/.config/opencode/plugins/rundev/ if you created a local dev bridge")
         return lines.join("\n")
+      }
+
+      // Facts for a guided pass, and the deterministic write of an approved manifest.
+      if (verb === "scan") {
+        const s = scan(dir)
+        return JSON.stringify(
+          { root: dir, draft: s.draft, notes: s.notes, signals: s.signals, workspaceMembers: membersWithManifest(dir) },
+          null,
+          2,
+        )
+      }
+
+      if (verb === "apply") {
+        const p = payload ?? {}
+        if (!p.manifest || typeof p.manifest !== "object") return "apply needs a `manifest` object"
+        const target = p.root ? String(p.root) : dir
+        const fs = await import("node:fs")
+        const file = path.join(target, ".opencode", "rundev.json")
+        fs.mkdirSync(path.dirname(file), { recursive: true })
+        fs.writeFileSync(file, `${JSON.stringify(p.manifest, null, 2)}\n`)
+        if (p.local) E.writeLocalOverrides(target, p.local)
+        if (p.workspace) {
+          fs.writeFileSync(path.join(target, WORKSPACE_REL), `${JSON.stringify(p.workspace, null, 2)}\n`)
+        }
+        const written = [".opencode/rundev.json"]
+        if (p.local) written.push(".opencode/rundev.local.json (machine)")
+        if (p.workspace) written.push(WORKSPACE_REL)
+        const loaded = findManifest(target)
+        if (!loaded) return `wrote ${written.join(" + ")} but could not read it back`
+        const problems = validate(loaded)
+        try {
+          await E.statusAll(loaded) // snapshot so the sidebar lights up
+        } catch {
+          /* ignore */
+        }
+        return [
+          `wrote ${written.join(" + ")}`,
+          problems.length ? `problems:\n- ${problems.join("\n- ")}` : "problems: none ✔",
+          "",
+          "next: /rundev status",
+        ].join("\n")
       }
 
       // A workspace root has no manifest of its own: handle member selection here.
@@ -496,6 +619,52 @@ export default Plugin.define({
           content: await execute("logs", [input.service, ...(input.tail ? [`--tail=${input.tail}`] : [])]),
         }),
       })
+      editor.add({
+        ...toolBase,
+        name: "scan",
+        description:
+          "Read-only facts for writing a rundev manifest: detected services, ports, scripts, .env sections, devices and member repos.",
+        input: { type: "object", properties: {}, additionalProperties: false },
+        execute: async () => ({ content: await execute("scan", []) }),
+      })
+      editor.add({
+        ...toolBase,
+        name: "apply",
+        description:
+          "Writes an APPROVED rundev manifest (validates first). Optionally `local` (machine overrides) and `workspace` (rundev.workspace.json with members/dependencies).",
+        input: {
+          type: "object",
+          properties: {
+            manifest: { type: "object", description: "The full .opencode/rundev.json content" },
+            local: { type: "object", description: "Optional .opencode/rundev.local.json content" },
+            workspace: { type: "object", description: "Optional rundev.workspace.json content" },
+            root: { type: "string", description: "Target directory (defaults to the session location)" },
+          },
+          required: ["manifest"],
+          additionalProperties: false,
+        },
+        execute: async (input: any) => ({ content: await execute("apply", [], undefined, input) }),
+      })
+    })
+
+    // ── the conventions travel with the plugin
+    const skillPath = (() => {
+      try {
+        return new URL(import.meta.url).pathname
+      } catch {
+        return "opencode-rundev/src/index.ts"
+      }
+    })()
+    await ctx.skill.transform((editor) => {
+      editor.add({
+        id: "rundev-manifest",
+        name: "rundev manifest",
+        description:
+          "How to write a rundev manifest: kinds, checks, targets, workspace dependencies, and the scan → propose → approve → apply workflow.",
+        path: skillPath,
+        content: MANIFEST_SKILL,
+        // `id`/`name`/`path` are branded at the type level only (Effect brand): erased at runtime.
+      } as any)
     })
   },
 })
