@@ -129,6 +129,22 @@ export default Plugin.define({
       }
     }
 
+    function cancelPicker(): void {
+      if (!picker()) return
+      context.ui.dialog.clear()
+      setPicker(null)
+    }
+
+    function confirmPicker(): void {
+      const p = picker()
+      if (!p) return
+      const chosen = p.rows.filter((r) => checked().has(r.name)).map((r) => r.name)
+      context.ui.dialog.clear()
+      setPicker(null)
+      if (chosen.length === 0) return
+      void dispatch(`${p.verb} ${chosen.join(" ")}`)
+    }
+
     function openPicker(verb: string, title: string, rows: PickerRow[]): void {
       setChecked(new Set(rows.map((r) => r.name)))
       setCursor(0)
@@ -149,19 +165,35 @@ export default Plugin.define({
               {(row, i) => {
                 const focused = () => i() === cursor()
                 const mark = () => (checked().has(row.name) ? "[x]" : "[ ]")
+                const accent = theme.text.action.primary.base
+                // wide enough for every row, so the highlight looks like a bar
+                const rowWidth = () => {
+                  const rows = picker()?.rows ?? []
+                  return Math.max(30, ...rows.map((r) => r.name.length + r.detail.length + 8))
+                }
                 return (
-                  <box
-                    width="100%"
-                    backgroundColor={focused() ? theme.background.action.primary.base : undefined}
-                  >
-                    <text fg={focused() ? theme.background.base : theme.text.base}>
-                      <b>{`  ${focused() ? "❯" : " "} ${mark()} ${row.name.padEnd(16)}`}</b>
-                      {` ${row.detail}`}
+                  <box width="100%" height={1} backgroundColor={focused() ? accent : undefined}>
+                    <text fg={focused() ? theme.background.base : theme.text.base} bg={focused() ? accent : undefined}>
+                      {`${focused() ? "❯" : " "} ${mark()} ${row.name.padEnd(16)} ${row.detail}`.padEnd(rowWidth())}
                     </text>
                   </box>
                 )
               }}
             </For>
+            <text fg={theme.text.muted}>{` `}</text>
+            <box flexDirection="row">
+              <text
+                bg={theme.text.action.primary.base}
+                fg={theme.background.base}
+                on:mouseDown={confirmPicker}
+              >{`  ok  `}</text>
+              <text>{` `}</text>
+              <text
+                bg={theme.background.raised.base}
+                fg={theme.text.base}
+                on:mouseDown={cancelPicker}
+              >{`  cancel  `}</text>
+            </box>
             <text fg={theme.text.muted}>{` `}</text>
           </box>
         ),
@@ -317,13 +349,8 @@ export default Plugin.define({
               id: "rundev.picker.ok",
               bind: "return",
               run: () => {
-                const p = picker()
-                if (!p) return false
-                const chosen = p.rows.filter((r) => checked().has(r.name)).map((r) => r.name)
-                context.ui.dialog.clear()
-                setPicker(null)
-                if (chosen.length === 0) return
-                void dispatch(`${p.verb} ${chosen.join(" ")}`)
+                if (!picker()) return false
+                confirmPicker()
               },
             },
             {
@@ -331,8 +358,7 @@ export default Plugin.define({
               bind: "escape",
               run: () => {
                 if (!picker()) return false
-                context.ui.dialog.clear()
-                setPicker(null)
+                cancelPicker()
               },
             },
           ],
