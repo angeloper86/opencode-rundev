@@ -153,7 +153,10 @@ export default Plugin.define({
         const theme = context.theme
         return (
           <box flexDirection="column" paddingLeft={1}>
-            <text fg={theme.text.muted}>{`rundev · ${path.basename(s.root)}`}</text>
+            <text fg={theme.text.base}>
+              <b>RUNDEV</b>
+              {` - ${path.basename(s.root)}`}
+            </text>
             <For each={s.services}>
               {(svc) => {
                 const live = () => {
