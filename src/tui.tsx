@@ -13,7 +13,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { spawn } from "node:child_process"
-import { createSignal, For } from "solid-js"
+import { createSignal, For, Show } from "solid-js"
 import { Plugin } from "@opencode/plugin/tui"
 import type { Context } from "@opencode/plugin/tui/context"
 import { findManifest, findWorkspace, workspaceMembers, type Loaded } from "./manifest.ts"
@@ -72,15 +72,6 @@ function describeMember(member: { name: string; loaded: Loaded }): string {
       return `${mark} ${name}`
     })
     .join("  ")
-}
-
-/** `bankyto-api` inside workspace `bankyto` → `api` (compact sidebar rows). */
-function shortMember(member: string, workspace: string): string {
-  for (const sep of ["-", "_", "."]) {
-    const prefix = `${workspace}${sep}`.toLowerCase()
-    if (member.toLowerCase().startsWith(prefix)) return member.slice(prefix.length)
-  }
-  return member
 }
 
 export default Plugin.define({
@@ -291,19 +282,23 @@ export default Plugin.define({
       append: "sidebar.content",
       render: () => {
         if (workspace) {
-          const rows = members()
-          if (rows.length === 0) return null
-          const width = Math.max(...rows.map((r) => shortMember(r.name, workspace.name).length))
+          // one block per repo, only repos with something running
+          const blocks = members().filter((m) => m.services.some((svc) => {
+            tick()
+            return isLive(svc)
+          }))
+          if (blocks.length === 0) return null
           return (
             <box flexDirection="column" paddingLeft={1}>
-              <text fg={theme.text.base}>
-                <b>RUNDEV</b>
-                {` - ${workspace.name}`}
-              </text>
-              <For each={rows}>
-                {(member) => (
-                  <box flexDirection="row">
-                    <text fg={theme.text.muted}>{`${shortMember(member.name, workspace.name).padEnd(width)} `}</text>
+              <For each={blocks}>
+                {(member, i) => (
+                  <box flexDirection="column">
+                    <Show when={i() > 0}>
+                      <text fg={theme.text.muted}>{` `}</text>
+                    </Show>
+                    <text fg={theme.text.base}>
+                      <b>{`RUNDEV - ${member.name}`}</b>
+                    </text>
                     <For each={member.services}>
                       {(svc) => {
                         const live = () => {
@@ -312,7 +307,7 @@ export default Plugin.define({
                         }
                         return (
                           <text fg={live() ? theme.text.feedback.success.base : theme.text.muted}>
-                            {` ${live() ? "●" : "○"}${svc.name}`}
+                            {`● ${svc.name}${svc.port ? ` :${svc.port}` : ""} ${live() ? "up" : svc.state}`}
                           </text>
                         )
                       }}
