@@ -65,9 +65,39 @@ export function stateDir(root: string): string {
   return path.join(root, ".opencode", ".rundev")
 }
 
+const gitignoreChecked = new Set<string>()
+
+/**
+ * Ensures one entry is present in the repo's `.gitignore` (checked once per
+ * process). rundev never leaves generated state for the user to ignore by hand.
+ */
+export function ensureGitignored(root: string, entry: string): boolean {
+  const key = `${root}|${entry}`
+  if (gitignoreChecked.has(key)) return false
+  gitignoreChecked.add(key)
+  try {
+    if (!fs.existsSync(path.join(root, ".git"))) return false // not a repo: don't litter
+    const file = path.join(root, ".gitignore")
+    const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : ""
+    const wanted = entry.replace(/\/$/, "")
+    const already = current
+      .split("\n")
+      .map((l) => l.trim())
+      .some((l) => l === entry || l === wanted)
+    if (already) return false
+    const head = current === "" || current.endsWith("\n") ? current : `${current}\n`
+    fs.writeFileSync(file, `${head}${entry}\n`)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function ensureStateDir(root: string): string {
   const dir = stateDir(root)
   fs.mkdirSync(dir, { recursive: true })
+  ensureGitignored(root, ".opencode/.rundev/")
+  ensureGitignored(root, ".opencode/rundev.local.json")
   return dir
 }
 
@@ -266,6 +296,7 @@ export async function browserPids(loaded: Loaded, svc: Service): Promise<number[
 
 export async function browserUp(loaded: Loaded, name: string, svc: Service) {
   const profile = profileDir(loaded, svc)
+  ensureGitignored(loaded.root, `${path.relative(loaded.root, profile)}/`)
   fs.mkdirSync(profile, { recursive: true })
   const url = svc.url ?? `http://localhost:${svc.port}`
   const r = await run(

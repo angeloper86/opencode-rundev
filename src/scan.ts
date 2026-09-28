@@ -7,6 +7,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
+import { ensureGitignored } from "./engine.ts"
 import type { Manifest, Service } from "./manifest.ts"
 
 export interface ScanResult {
@@ -156,12 +157,16 @@ export function scan(root: string): ScanResult {
       ...(port ? { health: healthUrl(root, port) } : {}),
     }
     defaults.push("app")
-    notes.push(`service "app" comes from package.json's dev script — rename it (e.g. "api") if you prefer`)
+    notes.push(
+      `service "app" comes from package.json's dev script — rename it if you like: "api", "backend", "front", "web"…`,
+    )
     if (!isVite && !port) notes.push("app: could not find the port in .env → TODO")
     if (isVite) {
       services.browser = { kind: "browser", url: "http://localhost:5173", profile: ".opencode/.chrome-profile" }
       defaults.push("browser")
-      notes.push("browser: add `.opencode/.chrome-profile/` to .gitignore")
+      if (ensureGitignored(root, ".opencode/.chrome-profile/")) {
+        notes.push("browser: added `.opencode/.chrome-profile/` to .gitignore")
+      }
     }
   }
   const deno = readJson(path.join(root, "deno.json")) ?? readJson(path.join(root, "deno.jsonc"))
