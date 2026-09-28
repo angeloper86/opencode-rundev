@@ -210,7 +210,7 @@ export default Plugin.define({
           try {
             report = await execute(verb, argv.slice(1), sessionID)
           } catch (err) {
-            report = `rundev falló: ${(err as Error).message}`
+            report = `rundev failed: ${(err as Error).message}`
           }
           E.emit(await locationFor(sessionID).then((d) => findManifest(d)?.root ?? d), {
             type: "report",

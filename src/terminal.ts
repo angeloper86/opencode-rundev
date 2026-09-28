@@ -61,7 +61,7 @@ async function ghosttySplit(line: string): Promise<{ ok: boolean; detail: string
   if (r.code !== 0) {
     const hint = /not allowed|1002|-1719|accessibility|assistive/i.test(r.err)
       ? "falta permiso de Accesibilidad/Automation para el proceso que ejecuta osascript"
-      : r.err.trim() || "osascript falló"
+      : r.err.trim() || "osascript failed"
     return { ok: false, detail: hint }
   }
   return { ok: true, detail: "panel abierto abajo en la ventana activa (shift+cmd+D)" }

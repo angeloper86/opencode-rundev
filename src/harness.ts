@@ -31,7 +31,7 @@ console.log("namespace:", namespaces.map((n) => n.name).join(", ") || "(ninguno)
 
 const cmd = commands.find((c) => c.name === "rundev")
 if (!cmd) {
-  console.log("✗ no se registró el comando rundev")
+  console.log("✗ the rundev command was not registered")
   process.exit(1)
 } else {
   console.log(`\n--- rundev ${argv.join(" ")}`)
