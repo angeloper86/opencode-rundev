@@ -81,11 +81,25 @@ stopped, it does not belong in the manifest.
 
 ### Machine overrides
 
-`.opencode/rundev.local.json` (gitignored) overrides what is specific to this machine:
+Machine-specific values are detected for you: `init` runs `flutter emulators` / `xcrun simctl list`
+and writes the AVD and simulator it finds into `.opencode/rundev.local.json` (gitignored). You can
+still edit that file by hand — it just is not required.
 
 ```jsonc
 { "services": { "app": { "targets": { "android": { "device": "pixel_8_api_36" } } } } }
 ```
+
+## Uninstall
+
+```sh
+/rundev uninstall --dry-run     # see what would be removed
+/rundev uninstall               # stop what is running, remove state, chrome profile, .gitignore entries
+/rundev uninstall --all         # also remove .opencode/rundev.json (the manifest you wrote)
+```
+
+It never touches your files: only the state it generated, the profile it created and the `.gitignore`
+lines it added. The global bits (the `plugins` entry in your OpenCode config) are printed as
+instructions, not modified.
 
 ## House rules
 

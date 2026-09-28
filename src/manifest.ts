@@ -132,7 +132,7 @@ export function validate(loaded: Loaded): string[] {
   if (names.length === 0) problems.push("no services declared")
   for (const name of names) {
     const svc = loaded.manifest.services[name]
-    if (!svc.kind) problems.push(`${name}: falta "kind"`)
+    if (!svc.kind) problems.push(`${name}: missing "kind"`)
     if (svc.kind === "compose") {
       if (!svc.file) problems.push(`${name}: compose without "file"`)
       if (!svc.service) problems.push(`${name}: compose without "service"`)

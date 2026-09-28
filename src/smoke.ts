@@ -115,5 +115,33 @@ ok("buildLine empieza con el guard cd", Boolean(line?.startsWith(`cd '${root}' &
 ok("buildLine rechaza rutas con comillas", buildLine({ cwd: `${root}/a'b"c$d`, command: "x", label: "y" }) === null)
 console.log(`   estrategia de terminal: ${defaultStrategy()}`)
 
+// ── uninstall helpers
+fs.writeFileSync(
+  path.join(root, ".gitignore"),
+  "node_modules/\n.opencode/.rundev/\n.opencode/.chrome-profile/\ndist/\n",
+)
+ok(
+  "gitignoreEntriesPresent detects rundev's entries",
+  E.gitignoreEntriesPresent(root).length === 2,
+  JSON.stringify(E.gitignoreEntriesPresent(root)),
+)
+const dryRows = E.cleanRepo(loaded, { dryRun: true })
+ok(
+  "cleanRepo (dry run) reports without touching anything",
+  dryRows.some((r) => r.action === "would-remove") && fs.existsSync(path.join(root, ".gitignore")),
+)
+const cleanRows = E.cleanRepo(loaded, { dryRun: false })
+ok(
+  "cleanRepo removes the state dir but keeps the manifest",
+  !fs.existsSync(path.join(root, ".opencode", ".rundev")) && fs.existsSync(path.join(root, ".opencode", "rundev.json")),
+  JSON.stringify(cleanRows.map((r) => r.what)),
+)
+const gi = fs.readFileSync(path.join(root, ".gitignore"), "utf8")
+ok(
+  ".gitignore keeps the user's lines only",
+  !gi.includes(".opencode") && gi.includes("node_modules/") && gi.includes("dist/"),
+  JSON.stringify(gi),
+)
+
 console.log(`\n${fails === 0 ? "TODO OK ✔" : `${fails} FALLO(S) ✗`}`)
 Deno.exit(fails === 0 ? 0 : 1)

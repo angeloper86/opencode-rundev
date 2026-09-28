@@ -101,6 +101,180 @@ export function ensureStateDir(root: string): string {
   return dir
 }
 
+// ─────────────────────────────────────────────────── machine detection
+
+/** Available Android AVDs (`flutter emulators`), best effort. */
+export async function detectAvds(): Promise<string[]> {
+  const r = await run("flutter", ["emulators"], { timeoutMs: 60_000 })
+  const ids = r.out
+    .split("\n")
+    .filter((l) => l.includes("•"))
+    .map((l) => l.split("•")[0]?.trim() ?? "")
+    .filter((id) => id && !/^id$/i.test(id))
+  return [...new Set(ids)]
+}
+
+/** Available iOS simulators (`xcrun simctl list devices available`), best effort. */
+export async function detectSimulators(): Promise<string[]> {
+  const r = await run("/usr/bin/xcrun", ["simctl", "list", "devices", "available"], { timeoutMs: 60_000 })
+  const names = r.out
+    .split("\n")
+    .map((l) => /^\s+(\S.*?) \([0-9A-Fa-f-]{36}\) \((Booted|Shutdown)\)/.exec(l)?.[1])
+    .filter((n): n is string => Boolean(n))
+  return [...new Set(names)]
+}
+
+// ───────────────────────────────────────────────────────── uninstall
+
+/** Entries rundev may have added to a repo's `.gitignore`. */
+export const GITIGNORE_ENTRIES = [".opencode/.rundev/", ".opencode/rundev.local.json", ".opencode/.chrome-profile/"]
+
+export function gitignoreEntriesPresent(root: string): string[] {
+  const file = path.join(root, ".gitignore")
+  if (!fs.existsSync(file)) return []
+  const wanted = new Set(GITIGNORE_ENTRIES.map((e) => e.replace(/\/$/, "")))
+  return [
+    ...new Set(
+      fs
+        .readFileSync(file, "utf8")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l && wanted.has(l.replace(/\/$/, ""))),
+    ),
+  ]
+}
+
+/** Removes rundev's own entries from `.gitignore`. Returns what it removed. */
+export function removeGitignoreEntries(root: string): string[] {
+  const present = gitignoreEntriesPresent(root)
+  if (present.length === 0) return []
+  const file = path.join(root, ".gitignore")
+  const wanted = new Set(GITIGNORE_ENTRIES.map((e) => e.replace(/\/$/, "")))
+  const kept = fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => {
+      const norm = l.trim().replace(/\/$/, "")
+      return !(norm && wanted.has(norm))
+    })
+  const text = kept.join("\n")
+  if (text.trim() === "") fs.rmSync(file, { force: true })
+  else fs.writeFileSync(file, text)
+  return present
+}
+
+function humanSize(bytes: number): string {
+  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`
+  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${bytes} B`
+}
+
+function dirSize(dir: string): number {
+  let total = 0
+  const walk = (d: string) => {
+    let entries: fs.Dirent[] = []
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const abs = path.join(d, e.name)
+      if (e.isDirectory()) walk(abs)
+      else {
+        try {
+          total += fs.statSync(abs).size
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+  walk(dir)
+  return total
+}
+
+export interface CleanAction {
+  what: string
+  action: "removed" | "would-remove" | "skipped"
+  detail?: string
+}
+
+/** Removes everything rundev generated in a repo. Never touches user files. */
+export function cleanRepo(loaded: Loaded, opts: { all?: boolean; dryRun?: boolean } = {}): CleanAction[] {
+  const rows: CleanAction[] = []
+  const act = (what: string, target: string) => {
+    if (!fs.existsSync(target)) {
+      rows.push({ what, action: "skipped", detail: "not there" })
+      return
+    }
+    let size = 0
+    try {
+      size = fs.statSync(target).isDirectory() ? dirSize(target) : fs.statSync(target).size
+    } catch {
+      /* ignore */
+    }
+    if (opts.dryRun) {
+      rows.push({ what, action: "would-remove", detail: humanSize(size) })
+      return
+    }
+    try {
+      fs.rmSync(target, { recursive: true, force: true })
+      rows.push({ what, action: "removed", detail: humanSize(size) })
+    } catch (err) {
+      rows.push({ what, action: "skipped", detail: (err as Error).message })
+    }
+  }
+
+  act("state (.opencode/.rundev)", stateDir(loaded.root))
+  for (const [name, svc] of Object.entries(loaded.manifest.services)) {
+    if (svc.kind === "browser") act(`chrome profile (${name})`, profileDir(loaded, svc))
+  }
+  act("machine overrides (.opencode/rundev.local.json)", path.join(loaded.root, ".opencode", "rundev.local.json"))
+  if (opts.all) act("manifest (.opencode/rundev.json)", path.join(loaded.root, ".opencode", "rundev.json"))
+
+  const present = gitignoreEntriesPresent(loaded.root)
+  if (present.length === 0) {
+    rows.push({ what: ".gitignore entries", action: "skipped", detail: "none" })
+  } else if (opts.dryRun) {
+    rows.push({ what: ".gitignore entries", action: "would-remove", detail: present.join(", ") })
+  } else {
+    rows.push({ what: ".gitignore entries", action: "removed", detail: removeGitignoreEntries(loaded.root).join(", ") })
+  }
+
+  // remove `.opencode/` itself only when it is empty (never your own files)
+  const opencodeDir = path.join(loaded.root, ".opencode")
+  if (fs.existsSync(opencodeDir) && !opts.dryRun) {
+    try {
+      fs.rmdirSync(opencodeDir)
+      rows.push({ what: ".opencode dir (was empty)", action: "removed" })
+    } catch {
+      /* not empty: leave it */
+    }
+  }
+  return rows
+}
+
+/** Merges machine-specific values into `.opencode/rundev.local.json`. */
+export function writeLocalOverrides(root: string, patch: Record<string, unknown>): string {
+  const file = path.join(root, ".opencode", "rundev.local.json")
+  let current: any = {}
+  try {
+    current = JSON.parse(fs.readFileSync(file, "utf8"))
+  } catch {
+    current = {}
+  }
+  current.services = { ...(current.services ?? {}) }
+  for (const [name, svc] of Object.entries((patch.services as Record<string, unknown>) ?? {})) {
+    current.services[name] = { ...(current.services[name] ?? {}), ...(svc as object) }
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, `${JSON.stringify(current, null, 2)}\n`)
+  ensureGitignored(root, ".opencode/rundev.local.json")
+  return file
+}
+
 export function eventsFile(root: string): string {
   return path.join(stateDir(root), "events.jsonl")
 }

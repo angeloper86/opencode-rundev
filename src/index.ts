@@ -125,7 +125,33 @@ export default Plugin.define({
           fs.writeFileSync(file, `${body}\n`)
           detail = `wrote ${path.relative(dir, file)}. Review what the scan cannot know, then commit it so it travels with the repo:\n\n${body}`
         }
-        const notes = s.notes.length ? `\n\nTo complete:\n- ${s.notes.join("\n- ")}` : ""
+        const notes = [...s.notes]
+        // Machine values (AVD / simulator) are detected and written for you.
+        const patch: any = { services: {} }
+        if (Object.values(s.draft.services).some((x) => x.kind === "emulator")) {
+          const avds = await E.detectAvds()
+          if (avds.length) {
+            patch.services.emulator = { avd: avds[0] }
+            notes.push(`emulator.avd = ${avds[0]}${avds.length > 1 ? ` (others detected: ${avds.slice(1).join(", ")})` : ""}`)
+          } else {
+            notes.push("no AVD detected (`flutter emulators`) — set emulator.avd by hand")
+          }
+        }
+        if (Object.values(s.draft.services).some((x) => x.kind === "simulator")) {
+          const sims = await E.detectSimulators()
+          if (sims.length) {
+            const pick = sims.find((x) => /iphone/i.test(x)) ?? sims[0]
+            patch.services.simulator = { device: pick }
+            notes.push(`simulator.device = ${pick}`)
+          } else {
+            notes.push("no simulator detected (`xcrun simctl list`) — set simulator.device by hand")
+          }
+        }
+        if (Object.keys(patch.services).length) {
+          E.writeLocalOverrides(dir, patch)
+          notes.push("written to .opencode/rundev.local.json (machine-specific, gitignored)")
+        }
+
         // light the sidebar right away (snapshot of what is already running)
         const after = findManifest(dir)
         if (after) {
@@ -135,7 +161,43 @@ export default Plugin.define({
             /* ignore */
           }
         }
-        return `${detail}${notes}`
+        const notesText = notes.length ? `\n\nTo complete:\n- ${notes.join("\n- ")}` : ""
+        return `${detail}${notesText}`
+      }
+
+      if (verb === "uninstall") {
+        const dryRun = argv.includes("--dry-run")
+        const all = argv.includes("--all")
+        const found = findManifest(dir)
+        const root = found?.root ?? dir
+        const loaded: Loaded =
+          found ?? { root, file: path.join(root, ".opencode", "rundev.json"), manifest: { services: {} }, localApplied: false }
+        const lines = [`rundev uninstall · ${path.basename(root)}${dryRun ? " (dry run)" : ""}`]
+
+        if (found) {
+          const statuses = await E.statusAll(loaded)
+          const up = statuses.filter((s) => s.state === "running" || s.state === "unhealthy")
+          if (up.length === 0) {
+            lines.push("  -  nothing running")
+          } else if (dryRun) {
+            lines.push(`  ··· would stop: ${up.map((s) => s.name).join(", ")}`)
+          } else {
+            for (const r of await E.down(loaded, up.map((s) => s.name))) {
+              lines.push(`  ${r.action === "stopped" ? "ok " : "!  "} ${r.name.padEnd(12)} ${r.detail}`)
+            }
+          }
+        }
+
+        for (const row of E.cleanRepo(loaded, { all, dryRun })) {
+          const icon = row.action === "removed" ? "ok " : row.action === "would-remove" ? "···" : " - "
+          lines.push(`  ${icon} ${row.what}${row.detail ? ` — ${row.detail}` : ""}`)
+        }
+
+        lines.push("")
+        lines.push("global (per machine — I never touch your config):")
+        lines.push('  · remove "opencode-rundev" from the plugins list in ~/.config/opencode/opencode.json(c)')
+        lines.push("  · delete ~/.config/opencode/plugins/rundev/ if you created a local dev bridge")
+        return lines.join("\n")
       }
 
       const resolved = resolveManifest(dir)
@@ -219,8 +281,8 @@ export default Plugin.define({
         }
         default:
           return (
-            `verbos: init · up · status · down · logs · doctor · env\n` +
-            `ejemplos:\n  /rundev up\n  /rundev up app@ios\n  /rundev down --all\n  /rundev logs api`
+            `verbs: init · up · status · down · logs · doctor · env · uninstall\n` +
+            `examples:\n  /rundev up\n  /rundev up app@ios\n  /rundev down --all\n  /rundev logs api\n  /rundev uninstall --dry-run`
           )
       }
     }
@@ -229,7 +291,7 @@ export default Plugin.define({
     await ctx.command.transform((editor) => {
       editor.add({
         name: "rundev",
-        description: "Repo dev environment: init · up · status · down · logs · doctor · env",
+        description: "Repo dev environment: init · up · status · down · logs · doctor · env · uninstall",
         execute: async ({ sessionID, prompt }: any) => {
           const argv = String(prompt?.text ?? "").trim().split(/\s+/).filter(Boolean)
           const verb = argv[0] ?? "status"
