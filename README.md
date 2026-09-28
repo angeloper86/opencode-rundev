@@ -1,5 +1,9 @@
 # opencode-rundev
 
+[![npm version](https://img.shields.io/npm/v/opencode-rundev.svg)](https://www.npmjs.com/package/opencode-rundev)
+[![CI](https://github.com/angeloper86/opencode-rundev/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/angeloper86/opencode-rundev/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/opencode-rundev.svg)](https://github.com/angeloper86/opencode-rundev/blob/main/LICENSE)
+
 **The VS Code "Run & Debug" for the terminal-first world.**
 
 `rundev` brings a repo's dev environment up and down from OpenCode — containers, dev servers, the
