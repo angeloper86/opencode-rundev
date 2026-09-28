@@ -258,11 +258,31 @@ export default Plugin.define({
         return lines.join("\n")
       }
 
-      // Workspace-wide operations need no manifest at the root: handle them first.
+      // A workspace root has no manifest of its own: handle member selection here.
       const ws = findWorkspace(dir)
-      if (flags.has("all") && ws && (verb === "status" || verb === "up" || verb === "down")) {
-        const members = workspaceMembers(ws)
-        if (members.length === 0) return `workspace ${path.basename(ws.root)}: no member has a manifest`
+      const wsMembers = ws ? workspaceMembers(ws) : []
+      if (ws && wsMembers.length > 0 && !findManifest(dir) && (verb === "status" || verb === "up" || verb === "down")) {
+        const unknown = services.filter((s) => !wsMembers.some((m) => m.name === s))
+        if (unknown.length) {
+          return `not a workspace member: ${unknown.join(", ")}\nmembers: ${wsMembers.map((m) => m.name).join(", ")}`
+        }
+        const title = `rundev · workspace ${ws.workspace.name ?? path.basename(ws.root)} (${wsMembers.length} repos)`
+        const selection = flags.has("all") ? wsMembers : wsMembers.filter((m) => services.includes(m.name))
+
+        if (selection.length === 0) {
+          const lines = [
+            title,
+            "",
+            `${verb} what? name the members you want (or --all for everything):`,
+            `  /rundev ${verb} ${wsMembers.map((m) => m.name).slice(0, 2).join(" ")}`,
+            "",
+          ]
+          for (const m of wsMembers) {
+            lines.push(`  ${m.name}`, statusTable(m.loaded, await E.statusAll(m.loaded), false), "")
+          }
+          return lines.join("\n").trimEnd()
+        }
+
         const t0 = Date.now()
         const strategy = flagValue(argv, "strategy") as TerminalStrategy | undefined
         const launchFn = async (plan: E.LaunchPlan) => {
@@ -270,8 +290,8 @@ export default Plugin.define({
           return { ok: r.ok, detail: `${r.detail}${r.ok ? ` → ${r.line}` : ""}` }
         }
         const waitMs = flagValue(argv, "wait") ? Number(flagValue(argv, "wait")) : undefined
-        const lines = [`rundev · workspace ${ws.workspace.name ?? path.basename(ws.root)} (${members.length} repos)`]
-        for (const m of members) {
+        const lines = [title]
+        for (const m of selection) {
           if (verb === "status") {
             lines.push("", `  ${m.name}`, statusTable(m.loaded, await E.statusAll(m.loaded), false))
           } else if (verb === "up") {
@@ -433,7 +453,7 @@ export default Plugin.define({
         ...toolBase,
         name: "up",
         description:
-          "Starts missing local services (idempotent). Accepts `services` as `app` or `app@ios`. Does not over-wait.",
+          "Starts missing local services (idempotent). Accepts `services` as `app` or `app@ios`. At a workspace root, pass member repo names; without them you get the menu.",
         input: {
           type: "object",
           properties: {
