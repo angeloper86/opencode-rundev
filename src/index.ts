@@ -421,6 +421,17 @@ export default Plugin.define({
           for (const m of wsMembers) {
             lines.push(`  ${m.name}`, statusTable(m.loaded, await E.statusAll(m.loaded), false), "")
           }
+          // The engine runs in the server: ask this session's TUI to open the member
+          // picker. The text below stays as the fallback for clients without one.
+          if (sessionID) {
+            E.emit(ws.root, {
+              type: "select",
+              verb,
+              workspace: ws.workspace.name ?? path.basename(ws.root),
+              members: wsMembers.map((m) => m.name),
+              sessionID,
+            })
+          }
           return lines.join("\n").trimEnd()
         }
 

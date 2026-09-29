@@ -1,7 +1,7 @@
 /**
  * engine.ts — the mechanics. Runtime-agnostic: runs inside the OpenCode server
- * (agent tools) and inside the TUI process (the /rundev command), and can be
- * smoke-tested with plain `deno run`.
+ * (the /rundev command and the agent tools), and can be smoke-tested with plain
+ * `deno run`.
  *
  * Ownership rule: rundev only stops what rundev started. Anything else is
  * reported, never touched.
@@ -280,13 +280,20 @@ export function eventsFile(root: string): string {
 }
 
 export interface RundevEvent {
-  /** `event` → toast; `report` → dialog with the full text. */
-  type: "event" | "report"
+  /** `event` → toast; `report` → dialog with the full text; `select` → member picker. */
+  type: "event" | "report" | "select"
   level?: "info" | "ok" | "warn" | "error"
   service?: string
   message?: string
   title?: string
   text?: string
+  /** `select`: verb to run once the members are chosen, and the workspace title. */
+  verb?: string
+  workspace?: string
+  /** `select`: member repo names the workspace offers. */
+  members?: string[]
+  /** `select`: session that asked, so only its TUI opens the picker. */
+  sessionID?: string
   /** Reporter id, so the TUI can group a run. */
   run?: string
   ts?: number

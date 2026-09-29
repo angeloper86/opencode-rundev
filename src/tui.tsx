@@ -3,8 +3,8 @@
  * tui.tsx — the visible half of rundev.
  *
  *  - Sidebar: live state of this repo's services (snapshot + pid liveness).
- *  - Picker: at a workspace root, `/rundev up` opens a checkbox multi-select and
- *    dispatches the chosen members to the server command.
+ *  - Picker: at a workspace root the server command emits a `select` event and this
+ *    side opens a checkbox multi-select, then re-dispatches the chosen members.
  *  - Reports open in a dialog; progress shows up as toasts.
  *
  * It never runs the engine: it only reads local files and forwards commands.
@@ -233,6 +233,7 @@ export default Plugin.define({
       offset = size
 
       let lastReport: any = null
+      let selectRequested = false
       for (const line of chunk.split("\n")) {
         if (!line.trim()) continue
         let ev: any
@@ -243,6 +244,21 @@ export default Plugin.define({
         }
         if (ev.type === "report") {
           lastReport = ev
+          continue
+        }
+        if (ev.type === "select") {
+          // The server command asked for a member selection: only this session's TUI answers.
+          const asked = String(ev.sessionID ?? "")
+          const mine = currentSessionID() ?? ""
+          if (asked && mine && asked !== mine) continue
+          const rows = (Array.isArray(ev.members) ? (ev.members as string[]) : []).map((name) => {
+            const member = workspace?.members.find((m) => m.name === name)
+            return { name, detail: member ? describeMember(member) : "" }
+          })
+          if (rows.length > 0) {
+            openPicker(String(ev.verb ?? "up"), String(ev.workspace ?? workspace?.name ?? "workspace"), rows)
+            selectRequested = true
+          }
           continue
         }
         try {
@@ -264,7 +280,7 @@ export default Plugin.define({
         }
       }
 
-      if (lastReport) {
+      if (lastReport && !selectRequested && !picker()) {
         try {
           context.ui.dialog.set({ size: "large" })
           void context.ui.dialog.alert({
@@ -344,7 +360,7 @@ export default Plugin.define({
       },
     })
 
-    // ── command surface (registered from a component scope, as the keymap requires)
+    // ── picker keys (registered from a component scope, as the keymap requires)
     context.ui.slot({
       append: "app",
       render: () => {
@@ -408,50 +424,6 @@ export default Plugin.define({
             "rundev.picker.ok",
             "rundev.picker.cancel",
           ],
-        }))
-
-        // `/rundev …`: forwards to the server, or opens the picker at a workspace root
-        context.keymap.layer(() => ({
-          mode: "global",
-          priority: 10,
-          commands: [
-            {
-              id: "rundev.command",
-              title: "rundev",
-              description: "Dev environment of the repo (or pick workspace members)",
-              group: "Plugin",
-              palette: true,
-              slash: { name: "rundev", arguments: true },
-              run: (input?: string) => {
-                const text = String(input ?? "").trim()
-                const words = text.split(/\s+/).filter(Boolean)
-                const verb = words[0] || "status"
-                const rest = words.slice(1)
-                const here = context.location?.directory ?? process.cwd()
-                const ws = findWorkspace(here)
-                const atWorkspaceRoot = Boolean(ws) && !findManifest(here)
-                const members = atWorkspaceRoot && ws ? workspaceMembers(ws) : []
-                const namesMember = rest.some((r) => members.some((m) => m.name === r))
-                const wantsPicker =
-                  atWorkspaceRoot &&
-                  members.length > 0 &&
-                  ["up", "down", "status"].includes(verb) &&
-                  !namesMember &&
-                  !text.includes("--all")
-
-                if (wantsPicker) {
-                  openPicker(
-                    verb,
-                    ws!.workspace.name ?? path.basename(ws!.root),
-                    members.map((m) => ({ name: m.name, detail: describeMember(m) })),
-                  )
-                  return
-                }
-                void dispatch(text || "status")
-              },
-            },
-          ],
-          bindings: ["rundev.command"],
         }))
 
         return null
