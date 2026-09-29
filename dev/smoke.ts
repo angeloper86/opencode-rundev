@@ -109,6 +109,90 @@ ok("ya no está vivo", !E.alive(pid))
 const st2 = await E.statusOf(loaded, "sleeper")
 ok("status lo ve abajo", st2.state === "stopped", `${st2.state} · ${st2.detail}`)
 
+// ── interactive: the panel marker is what makes a second `up` idempotent
+let launches = 0
+const launch = async (plan: E.LaunchPlan) => {
+  launches++
+  return { ok: true, detail: `panel ${launches} → ${plan.command}` }
+}
+
+const upP1 = await E.up(loaded, ["interactive"], { launch })
+ok("interactive up opens the panel", upP1[0]?.action === "started", JSON.stringify(upP1[0]))
+const marker = E.readPanel(root, "interactive")
+ok("the launch marker is written with its target", marker?.target === "android", JSON.stringify(marker))
+ok("the marker is not a pidfile (stopProcess must never kill by it)", E.readProc(root, "interactive") === null)
+const stP = await E.statusOf(loaded, "interactive")
+ok("status sees the panel as running", stP.state === "running", `${stP.state} · ${stP.detail}`)
+
+const upP2 = await E.up(loaded, ["interactive"], { launch })
+ok(
+  "a second up does NOT open a second panel",
+  upP2[0]?.action === "already" && launches === 1,
+  `launches=${launches} · ${upP2[0]?.action}`,
+)
+
+const upP3 = await E.up(loaded, ["interactive"], { launch, force: true })
+ok("--force relaunches exactly one panel", upP3[0]?.action === "started" && launches === 2, `launches=${launches}`)
+
+const retarget = await E.up(loaded, ["interactive"], { targets: { interactive: "ios" }, launch })
+ok(
+  "an explicit target with an inactive .env section is blocked, not double-launched",
+  retarget[0]?.action === "blocked" && launches === 2,
+  JSON.stringify(retarget[0]),
+)
+ok("the blocked retarget keeps the marker on android", E.readPanel(root, "interactive")?.target === "android")
+
+E.applyEnvSection(root, "IOS")
+const upIos = await E.up(loaded, ["interactive"], { targets: { interactive: "ios" }, launch })
+ok("up app@ios relaunches for the new target", upIos[0]?.action === "started" && launches === 3, JSON.stringify(upIos[0]))
+ok("the marker records the new target", E.readPanel(root, "interactive")?.target === "ios")
+E.applyEnvSection(root, "ANDROID")
+
+const downP = await E.down(loaded, ["interactive"])
+ok(
+  "down forgets the panel",
+  downP[0]?.action === "stopped" && E.readPanel(root, "interactive") === null,
+  JSON.stringify(downP[0]),
+)
+ok("stopProcess never sees the panel marker", (await E.stopProcess(root, "interactive")).detail.includes("nothing to stop"))
+
+const upP4 = await E.up(loaded, ["interactive"], { launch })
+ok("after down, up opens a panel again", upP4[0]?.action === "started" && launches === 4, `launches=${launches}`)
+
+// ── interactive + `check`: a declared check makes the panel verifiable
+const withCheck = (check: string) =>
+  ({ ...loaded, manifest: { services: { app: { kind: "interactive", up: "echo", check } } } }) as any
+const stBad = await E.statusOf(withCheck("test -f /rundev-does-not-exist"), "app")
+ok("a failing check reports the panel as gone (up would relaunch)", stBad.state === "stopped", `${stBad.state} · ${stBad.detail}`)
+const stOk = await E.statusOf(withCheck("true"), "app")
+ok(
+  "a passing check reports the panel as running, even with no marker",
+  stOk.state === "running" && stOk.detail.includes("check passes"),
+  `${stOk.state} · ${stOk.detail}`,
+)
+
+// per-target check: each device is verified on its own terms
+const perTarget = {
+  ...loaded,
+  manifest: {
+    services: {
+      app: {
+        kind: "interactive",
+        up: "echo",
+        defaultTarget: "android",
+        targets: { android: { check: "true" }, ios: { check: "test -f /rundev-does-not-exist" } },
+      },
+    },
+  },
+} as any
+ok("per-target check: the default target passes → running", (await E.statusOf(perTarget, "app")).state === "running")
+E.writePanel(root, "app", { label: "x", command: "echo", cwd: root, target: "ios", startedAt: Date.now() })
+ok(
+  "per-target check follows the recorded target, not the default",
+  (await E.statusOf(perTarget, "app")).state === "stopped",
+)
+E.clearPanel(root, "app")
+
 // ── terminal guard
 const line = buildLine({ cwd: root, command: "flutter run", label: "app · ios" })
 ok("buildLine empieza con el guard cd", Boolean(line?.startsWith(`cd '${root}' &&`)), line ?? "(null)")

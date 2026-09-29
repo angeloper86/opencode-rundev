@@ -102,7 +102,7 @@ stopped, it does not belong in the manifest.
       "kind": "interactive",
       "defaultTarget": "android",
       "targets": {
-        "android": { "device": "emulator", "envSection": "ANDROID", "requires": ["emulator"] },
+        "android": { "device": "emulator", "envSection": "ANDROID", "requires": ["emulator"], "check": "adb shell pidof com.example.app" },
         "ios": { "device": "simulator", "envSection": "IOS", "requires": ["simulator"] }
       }
     },
@@ -119,7 +119,7 @@ stopped, it does not belong in the manifest.
 | `compose` | A `docker compose` service | `docker compose ps` | `docker compose stop` (never `-v`) |
 | `process` | A host server (`yarn dev`, `deno task dev`) | pidfile + `check`/`health` | SIGTERM to the group, then verify |
 | `browser` | Chrome with the project profile | `pgrep` by profile | closes only that profile |
-| `interactive` | Something that opens a panel (`flutter run`) | not verifiable (no terminal IPC) | the panel is yours |
+| `interactive` | Something that opens a panel (`flutter run`) | `check` when declared, otherwise the launch marker | rundev forgets the panel |
 | `emulator` | An Android AVD | `adb devices` | `adb emu kill`, fire-and-forget (it may save a quick-boot snapshot) |
 | `simulator` | An iOS simulator | `xcrun simctl list booted` | `xcrun simctl shutdown`, fire-and-forget |
 
@@ -148,6 +148,10 @@ instructions, not modified.
 ## House rules
 
 - **`up` is idempotent and non-blocking**: it starts and returns; whatever is already up is left alone.
+  That includes panels: rundev remembers the panel it opened, so a second `up` never opens a duplicate.
+  `down app` forgets it and `up app --force` relaunches it on purpose. Adding `check` to an
+  `interactive` service (or to a `target`, for a service that switches device) makes the panel
+  verifiable, and then `up` relaunches by itself when the app is gone.
 - **`down` only stops what rundev started.** A process of yours holding the port is reported, never killed.
 - **It never deletes volumes or data.**
 - **`.env` is only verified**: if the active section does not match the requested target, `up` stops and

@@ -331,6 +331,61 @@ export function readProc(root: string, name: string): ProcState | null {
   }
 }
 
+// ──────────────────────────────────────────────────────── interactive panels
+
+/**
+ * A panel rundev opened in the user's terminal. There is no terminal IPC, so
+ * this marker is the only evidence rundev can have: it is written when the panel
+ * is launched and forgotten by `down`.
+ *
+ * It lives in its own file (`<name>.panel.json`) on purpose: `stopProcess` kills
+ * by pidfile, and an interactive panel has no pid — reusing `<name>.json` would
+ * feed `process.kill(0, …)` (the whole process group, ours included).
+ */
+export interface PanelState {
+  name: string
+  label: string
+  command: string
+  cwd: string
+  /** Target key (`android`, `ios`, …) when the service declares `targets`. */
+  target?: string
+  startedAt: number
+}
+
+export function panelFile(root: string, name: string): string {
+  return path.join(stateDir(root), `${name}.panel.json`)
+}
+
+export function readPanel(root: string, name: string): PanelState | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(panelFile(root, name), "utf8"))
+    return typeof raw?.startedAt === "number" ? (raw as PanelState) : null
+  } catch {
+    return null
+  }
+}
+
+export function writePanel(root: string, name: string, info: Omit<PanelState, "name">): PanelState {
+  const state: PanelState = { name, ...info }
+  ensureStateDir(root)
+  fs.writeFileSync(panelFile(root, name), JSON.stringify(state, null, 2))
+  return state
+}
+
+/** Forgets the panel. Returns whether there was something to forget. */
+export function clearPanel(root: string, name: string): boolean {
+  const file = panelFile(root, name)
+  if (!fs.existsSync(file)) return false
+  fs.rmSync(file, { force: true })
+  return true
+}
+
+/** `14:32:05 · android` — how a panel marker reads in a status line. */
+export function panelWhen(panel: PanelState): string {
+  const when = new Date(panel.startedAt).toLocaleTimeString()
+  return panel.target ? `${when} · ${panel.target}` : when
+}
+
 export function startProcess(root: string, name: string, command: string, cwd: string): ProcState {
   const dir = ensureStateDir(root)
   const log = path.join(dir, `${name}.log`)
@@ -357,6 +412,11 @@ export async function stopProcess(
 ): Promise<{ ok: boolean; detail: string }> {
   const st = readProc(root, name)
   if (!st) return { ok: true, detail: "not started by rundev (nothing to stop)" }
+  if (!Number.isInteger(st.pid) || st.pid <= 1) {
+    // Defense in depth: pid 0 and negative pids address process *groups*
+    // (ours included). A pidfile without a usable pid must never reach kill.
+    return { ok: true, detail: "the pidfile has no usable pid (nothing to stop)" }
+  }
   if (!alive(st.pid)) return { ok: true, detail: `already dead (pid ${st.pid})` }
 
   const signal = (sig: "SIGTERM" | "SIGKILL") => {
@@ -746,9 +806,10 @@ export interface ServiceStatus {
   holders?: number[]
 }
 
-async function checkCommand(loaded: Loaded, svc: Service): Promise<boolean | null> {
-  if (svc.check) {
-    const r = await run("/bin/sh", ["-lc", svc.check], { cwd: serviceCwd(loaded, svc), timeoutMs: 10_000 })
+async function checkCommand(loaded: Loaded, svc: Service, target?: Target): Promise<boolean | null> {
+  const check = target?.check ?? svc.check
+  if (check) {
+    const r = await run("/bin/sh", ["-lc", check], { cwd: serviceCwd(loaded, svc), timeoutMs: 10_000 })
     return r.code === 0
   }
   if (svc.health) {
@@ -807,11 +868,41 @@ export async function statusOf(loaded: Loaded, name: string): Promise<ServiceSta
     return { ...base, state: "stopped", detail: st ? `pid ${st.pid} exited` : "not started by rundev" }
   }
 
-  // interactive
-  const st = readProc(loaded.root, name)
-  return st
-    ? { ...base, state: "running", detail: `lanzado (${new Date(st.startedAt).toLocaleTimeString()})`, pid: st.pid }
-    : { ...base, state: "unknown", detail: "cannot verify an open panel (no terminal IPC)" }
+  // interactive: verified with `check`/`health` when the manifest declares one
+  // (per target, when the service declares `targets`). Without one, the only
+  // evidence rundev has is the marker it wrote when it opened the panel — hence
+  // the honest "assumed open" wording.
+  const panel = readPanel(loaded.root, name)
+  const activeTarget = svc.targets
+    ? svc.targets[panel?.target ?? svc.defaultTarget ?? Object.keys(svc.targets)[0]]
+    : undefined
+  const verdict = await checkCommand(loaded, svc, activeTarget)
+  if (verdict === false) {
+    return {
+      ...base,
+      state: "stopped",
+      detail: panel
+        ? `the panel launched ${panelWhen(panel)} is gone (the check fails)`
+        : "the check fails and no panel was launched by rundev",
+    }
+  }
+  if (verdict === true) {
+    return {
+      ...base,
+      state: "running",
+      detail: panel
+        ? `panel launched ${panelWhen(panel)} · the check passes`
+        : "the check passes (no panel launched by rundev)",
+    }
+  }
+  if (panel) {
+    return {
+      ...base,
+      state: "running",
+      detail: `panel launched ${panelWhen(panel)} · assumed open (no check declared)`,
+    }
+  }
+  return { ...base, state: "unknown", detail: "cannot verify an open panel (no terminal IPC)" }
 }
 
 export async function statusAll(loaded: Loaded): Promise<ServiceStatus[]> {
@@ -883,6 +974,8 @@ export interface UpResult {
 export interface UpOptions {
   /** Bounded wait for readiness (ms). 0 = fire and report. */
   waitMs?: number
+  /** Relaunch what is already up (`--force`), panels included. */
+  force?: boolean
   /** Launcher for interactive services (the plugin wires the terminal here). */
   launch?: (plan: LaunchPlan) => Promise<{ ok: boolean; detail: string }>
   /** `app` → `ios`: which target to launch per interactive service. */
@@ -954,10 +1047,25 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
       continue
     }
     const st = await statusOf(loaded, name)
+    const wanted = svc.targets ? resolveTarget(svc, opts.targets?.[name])?.name : undefined
+    const panel = svc.kind === "interactive" ? readPanel(loaded.root, name) : null
+    // An explicit `app@ios` over a panel opened for `android` is a real request:
+    // relaunch there instead of answering "already up".
+    const retarget = Boolean(wanted && panel?.target && panel.target !== wanted)
+    const force = Boolean(opts.force) || retarget
     if (st.state === "unhealthy") {
       // alive but not serving: recover it (we own the pidfile, so a restart is safe)
       emitEv({ type: "event", level: "warn", service: name, message: "alive but unhealthy → restarting" })
       await stopProcess(loaded.root, name)
+    } else if (st.state === "running" && force) {
+      // Relaunch the same service (the launch itself forgets the old panel).
+      emitEv({
+        type: "event",
+        level: "warn",
+        service: name,
+        message: retarget ? `open for ${panel?.target} → switching to ${wanted}` : "already up → relaunching (--force)",
+      })
+      if (svc.kind === "process") await stopProcess(loaded.root, name)
     } else if (st.state === "running") {
       emitEv({ type: "event", level: "ok", service: name, message: `already up · ${st.detail}` })
       results.push({ name, action: "already", detail: st.detail })
@@ -1052,7 +1160,20 @@ export async function up(loaded: Loaded, names: string[], opts: UpOptions = {}):
       results.push({ name, action: "manual", detail: plan.command })
       continue
     }
+    // A fresh launch supersedes whatever was recorded — and a failed one leaves
+    // no marker behind, so the next `up` is allowed to retry.
+    clearPanel(loaded.root, name)
     const r = await opts.launch(plan)
+    if (r.ok) {
+      // Remember the panel: it is what makes a second `up` idempotent.
+      writePanel(loaded.root, name, {
+        label: plan.label,
+        command: plan.command,
+        cwd: plan.cwd,
+        target: plan.target,
+        startedAt: Date.now(),
+      })
+    }
     emitEv({ type: "event", level: r.ok ? "ok" : "warn", service: name, message: r.detail })
     results.push({ name, action: r.ok ? "started" : "failed", detail: r.detail })
   }
@@ -1078,7 +1199,17 @@ export async function down(loaded: Loaded, names: string[]): Promise<UpResult[]>
     else if (svc.kind === "browser") r = await browserDown(loaded, name, svc)
     else if (svc.kind === "emulator") r = await emulatorDown(name)
     else if (svc.kind === "simulator") r = await simulatorDown()
-    else r = { ok: true, detail: "the panel is yours: close it with ctrl+C" }
+    else {
+      // interactive: rundev never owns the panel, it only forgets it — so the
+      // next `up` is allowed to open a new one.
+      const known = clearPanel(loaded.root, name)
+      r = {
+        ok: true,
+        detail: known
+          ? "forgotten (close it with ctrl+C if it is still open)"
+          : "the panel is yours: close it with ctrl+C",
+      }
+    }
 
     emitEv({ type: "event", level: r.ok ? "ok" : "warn", service: name, message: r.detail })
     results.push({ name, action: r.ok ? "stopped" : "failed", detail: r.detail })
@@ -1095,7 +1226,11 @@ export async function logs(loaded: Loaded, name: string, tail = 40): Promise<str
   if (svc.kind === "process" || svc.kind === "interactive") {
     const st = readProc(loaded.root, name)
     const file = st?.log ?? path.join(stateDir(loaded.root), `${name}.log`)
-    if (!fs.existsSync(file)) return `no log yet (${path.relative(loaded.root, file)})`
+    if (!fs.existsSync(file)) {
+      return svc.kind === "interactive"
+        ? "the panel owns its output (rundev does not capture it)"
+        : `no log yet (${path.relative(loaded.root, file)})`
+    }
     const lines = fs.readFileSync(file, "utf8").split("\n")
     const out = lines.slice(-tail).join("\n").trimEnd()
     return out || "(the log is still empty)"

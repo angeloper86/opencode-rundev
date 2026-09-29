@@ -18,6 +18,8 @@ export interface Target {
   envSection?: string
   /** Command to launch in the panel (defaults to the service `up`). */
   launch?: string
+  /** Check command for this target (exit 0 = up); overrides the service `check`. */
+  check?: string
   /** Other services that must be up first. */
   requires?: string[]
 }

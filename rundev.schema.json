@@ -26,6 +26,7 @@
         "device": { "type": "string", "description": "emulator-5554, iPhone 16, chrome…" },
         "envSection": { "type": "string", "description": "Sección del .env que este target requiere (solo se verifica)." },
         "launch": { "type": "string", "description": "Comando a lanzar en el panel (por defecto, el `up` del servicio)." },
+        "check": { "type": "string", "description": "Comando de verificación de este target (exit 0 = arriba); tiene prioridad sobre el `check` del servicio." },
         "requires": { "type": "array", "items": { "type": "string" }, "description": "Otros servicios que deben estar arriba." }
       }
     },

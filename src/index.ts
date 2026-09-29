@@ -41,7 +41,7 @@ unknown, say so and suggest one.
 |---|---|---|---|---|
 | \`compose\` | a docker compose service | \`file\`, \`service\` | \`docker compose ps\` | \`docker compose stop\` (never \`-v\`) |
 | \`process\` | a host server (\`yarn dev\`, \`deno task dev\`) | \`up\` | pidfile + \`check\`/\`health\` | SIGTERM to the group |
-| \`interactive\` | something that opens a terminal (\`flutter run\`) | \`up\` or \`targets\` | not verifiable | the panel is yours |
+| \`interactive\` | something that opens a terminal (\`flutter run\`) | \`up\` or \`targets\` | \`check\` when declared, else the launch marker | rundev forgets the panel (\`down\`) |
 | \`browser\` | Chrome with a project profile | \`url\` or \`port\` | pgrep by profile | closes that profile |
 | \`emulator\` | an Android AVD | \`avd\` | \`adb devices\` | \`adb emu kill\` (fire-and-forget) |
 | \`simulator\` | an iOS simulator | \`device\` | \`xcrun simctl list booted\` | \`xcrun simctl shutdown\` |
@@ -55,6 +55,11 @@ unknown, say so and suggest one.
 - \`interactive.targets\`: one entry per device/platform with \`device\`, optional \`envSection\` (the \`.env\`
   section it requires — verified only, never written by rundev) and \`requires\` (services to bring up
   first, e.g. the emulator).
+- \`check\` on an \`interactive\` service makes the panel verifiable (e.g.
+  \`adb -s <serial> shell pidof <applicationId>\`); on a service with \`targets\`, put it inside the
+  target (\`targets.android.check\`) so each device is verified on its own terms. With a check, a
+  closed app is detected and \`up\` relaunches. Without one, rundev trusts the panel it launched —
+  a second \`up\` never opens a duplicate panel and \`up --force\` is the way to relaunch one.
 - \`stopMode: "fire-and-forget"\`: for services whose shutdown takes a while (emulators).
 
 ## Workflow
@@ -447,7 +452,7 @@ export default Plugin.define({
           if (verb === "status") {
             lines.push("", `  ${m.name}`, statusTable(m.loaded, await E.statusAll(m.loaded), false))
           } else if (verb === "up") {
-            const rs = await E.up(m.loaded, defaultSet(m.loaded), { waitMs, launch: launchFn })
+            const rs = await E.up(m.loaded, defaultSet(m.loaded), { waitMs, launch: launchFn, force: flags.has("force") })
             lines.push("", `  ${m.name}`, ...rs.map(resultLine))
           } else {
             const rs = await E.down(m.loaded, defaultSet(m.loaded))
@@ -508,6 +513,7 @@ export default Plugin.define({
             return { ok: r.ok, detail: `${r.detail}${r.ok ? ` → ${r.line}` : ""}` }
           }
           const waitMs = flagValue(argv, "wait") ? Number(flagValue(argv, "wait")) : undefined
+          const force = flags.has("force")
 
           // Workspace mode: declared dependencies of this member come up first.
           const dependencies: string[] = []
@@ -520,13 +526,13 @@ export default Plugin.define({
                 continue
               }
               E.emit(depLoaded.root, { type: "event", level: "info", message: `workspace dependency of ${me}` })
-              const rs = await E.up(depLoaded, defaultSet(depLoaded), { waitMs, launch: launchFn })
+              const rs = await E.up(depLoaded, defaultSet(depLoaded), { waitMs, launch: launchFn, force })
               dependencies.push(...rs.map((r) => `  ${resultIcon(r.action)} ${`${dep}:${r.name}`.padEnd(18)} ${r.action.padEnd(8)} ${r.detail}`))
             }
           }
 
           const names = services.length ? services : defaultSet(loaded)
-          const results = await E.up(loaded, names, { waitMs, targets, launch: launchFn })
+          const results = await E.up(loaded, names, { waitMs, targets, launch: launchFn, force })
           const head = dependencies.length ? `workspace dependencies:\n${dependencies.join("\n")}\n\n` : ""
           return `${head}${upTable(results)}\n\n(${((Date.now() - t0) / 1000).toFixed(1)}s)`
         }
@@ -556,7 +562,7 @@ export default Plugin.define({
         default:
           return (
             `verbs: init · up · status · down · logs · doctor · env · uninstall\n` +
-            `examples:\n  /rundev init --guided   (let the agent propose the manifest)\n  /rundev up\n  /rundev up app@ios\n  /rundev down --all\n  /rundev logs api\n  /rundev uninstall --dry-run`
+            `examples:\n  /rundev init --guided   (let the agent propose the manifest)\n  /rundev up\n  /rundev up app@ios\n  /rundev up app --force   (relaunch the panel it already opened)\n  /rundev down --all\n  /rundev logs api\n  /rundev uninstall --dry-run`
           )
       }
     }
@@ -615,18 +621,20 @@ export default Plugin.define({
         ...toolBase,
         name: "up",
         description:
-          "Starts missing local services (idempotent). Accepts `services` as `app` or `app@ios`. At a workspace root, pass member repo names; without them you get the menu.",
+          "Starts missing local services (idempotent: it never reopens a panel for an interactive service it already launched; pass `force` to relaunch). Accepts `services` as `app` or `app@ios`. At a workspace root, pass member repo names; without them you get the menu.",
         input: {
           type: "object",
           properties: {
             services: { type: "array", items: { type: "string" }, description: "Empty = the repo default" },
             wait: { type: "number", description: "max ms to wait for readiness" },
+            force: { type: "boolean", description: "Relaunch what is already up, interactive panels included" },
           },
           additionalProperties: false,
         },
         execute: async (input: any) => {
           const argv = [...(input?.services ?? [])]
           if (input?.wait) argv.push(`--wait=${input.wait}`)
+          if (input?.force) argv.push("--force")
           return { content: await execute("up", argv) }
         },
       })
