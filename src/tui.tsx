@@ -56,9 +56,12 @@ function alive(pid?: number): boolean {
   }
 }
 
-/** A service is live if its recorded pid still exists. */
+/**
+ * A service is live if its recorded pid still exists. Interactive panels have no
+ * pid: there the state rundev recorded when it opened the panel is all there is.
+ */
 function isLive(svc: SnapService): boolean {
-  if (svc.kind === "process" || svc.kind === "interactive") return svc.state === "running" && alive(svc.pid)
+  if (svc.kind === "process") return svc.state === "running" && alive(svc.pid)
   return svc.state === "running"
 }
 
@@ -127,12 +130,18 @@ export default Plugin.define({
         context.ui.toast.show({ variant: "warning", title: "rundev", message: "open a session first", duration: 3000 })
         return
       }
-      try {
-        const client: any = context.client
-        const res = await client?.session?.command?.({ sessionID, name: "rundev", text })
-        if (res !== undefined) return
-      } catch {
-        /* fall through to the CLI */
+      // Primary path: the client. `session.command` resolves to `void`, so the
+      // only thing worth checking is that the client exposes it at all — a
+      // return-value test (`res !== undefined`) is always false and falls
+      // through to the CLI as well, running the verb twice.
+      const client: any = context.client
+      if (client?.session?.command) {
+        try {
+          await client.session.command({ sessionID, name: "rundev", text })
+          return
+        } catch {
+          /* unreachable server: fall through to the CLI */
+        }
       }
       try {
         const child = spawn(
