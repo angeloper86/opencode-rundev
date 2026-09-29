@@ -1,6 +1,6 @@
 {
   "name": "opencode-rundev",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Run & Debug for the terminal-first world: bring a repo's dev environment up and down from OpenCode — containers, dev servers, emulators — with no LLM in the loop.",
   "type": "module",
   "license": "MIT",
