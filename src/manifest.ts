@@ -28,7 +28,7 @@ export interface Service {
   kind: Kind
   /** Service TCP port (verification and reporting). */
   port?: number
-  /** Working directory relative to the repo root (e.g. "../bankyto-api"). */
+  /** Working directory relative to the repo root (e.g. "../acme-api"). */
   cwd?: string
   /** Command for `process` / `interactive` services. */
   up?: string

@@ -173,15 +173,15 @@ parent (`/rundev init` there writes one for you):
 
 ```jsonc
 {
-  "name": "bankyto",
-  "members": ["bankyto-api", "bankyto-admin", "bankyto_app"],
-  "dependencies": { "bankyto_app": ["bankyto-api"] }
+  "name": "acme",
+  "members": ["acme-api", "acme-web", "acme-app"],
+  "dependencies": { "acme-app": ["acme-api"] }
 }
 ```
 
 - `members` are only used with `--all`: `/rundev status --all`, `/rundev up --all`, `/rundev down --all`.
-- `dependencies` are only honoured **in workspace mode**: `/rundev up` inside `bankyto_app` brings
-  `bankyto-api` up first (its own default set).
+- `dependencies` are only honoured **in workspace mode**: `/rundev up` inside `acme-app` brings
+  `acme-api` up first (its own default set).
 - Outside a workspace there is **no cross-repo awareness at all**: a repo only ever sees its own manifest.
 
 ## Timeline
