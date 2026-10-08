@@ -151,7 +151,10 @@ instructions, not modified.
   That includes panels: rundev remembers the panel it opened, so a second `up` never opens a duplicate.
   `down app` forgets it and `up app --force` relaunches it on purpose. Adding `check` to an
   `interactive` service (or to a `target`, for a service that switches device) makes the panel
-  verifiable, and then `up` relaunches by itself when the app is gone.
+  verifiable, and then `up` relaunches by itself when the app is gone. The launch itself is
+  verified too: `up` waits (bounded) for the check right after opening the panel; if it does not
+  pass, it reports the launch as unverified, leaves the command on the clipboard and forgets the
+  panel, so the next `up` retries instead of pretending it worked.
 - **`down` only stops what rundev started.** A process of yours holding the port is reported, never killed.
 - **It never deletes volumes or data.**
 - **`.env` is only verified**: if the active section does not match the requested target, `up` stops and

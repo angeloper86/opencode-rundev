@@ -461,6 +461,17 @@ function composeArgs(svc: Service, cmd: string[]): string[] {
   return ["compose", ...files.flatMap((f) => ["-f", f]), ...cmd]
 }
 
+/**
+ * Finds the row of a compose service. The `Service` field is the source of
+ * truth; the container name is only a fallback when it matches exactly — a
+ * substring match would confuse `app` with `laifapp_mysql`.
+ */
+export function matchComposeRow(rows: any[], target: string): any | undefined {
+  const service = (c: any) => String(c.Service ?? c.service ?? "")
+  const name = (c: any) => String(c.Name ?? c.name ?? "")
+  return rows.find((c) => service(c) === target) ?? rows.find((c) => name(c) === target)
+}
+
 export async function composeState(
   loaded: Loaded,
   name: string,
@@ -485,9 +496,7 @@ export async function composeState(
       }
     })
     .filter(Boolean) as any[]
-  const row = rows.find(
-    (c) => c.Service === target || c.service === target || String(c.Name ?? c.name ?? "").includes(target),
-  )
+  const row = matchComposeRow(rows, target)
   if (!row) return { state: "stopped", detail: "container does not exist" }
   const state = String(row.State ?? row.state ?? "")
   const status = String(row.Status ?? row.status ?? state)
@@ -817,6 +826,29 @@ async function checkCommand(loaded: Loaded, svc: Service, target?: Target): Prom
     return r.code === 0
   }
   return null
+}
+
+/**
+ * Bounded wait for an interactive service's declared `check`/`health` to pass,
+ * right after the panel was opened. `null` means neither the service nor its
+ * active target declares one, so there is nothing to verify against.
+ */
+export async function verifyInteractive(
+  loaded: Loaded,
+  name: string,
+  targetName?: string,
+  waitMs = 30_000,
+): Promise<boolean | null> {
+  const svc = loaded.manifest.services[name]
+  if (!svc) return null
+  const target = targetName && svc.targets ? svc.targets[targetName] : undefined
+  if (!(target?.check ?? svc.check ?? svc.health)) return null
+  const deadline = Date.now() + Math.max(1_000, waitMs)
+  for (;;) {
+    if ((await checkCommand(loaded, svc, target)) === true) return true
+    if (Date.now() >= deadline) return false
+    await sleep(700)
+  }
 }
 
 export async function statusOf(loaded: Loaded, name: string): Promise<ServiceStatus> {

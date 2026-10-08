@@ -193,6 +193,38 @@ ok(
 )
 E.clearPanel(root, "app")
 
+// ── compose: the row is matched by service, never by a look-alike name
+const composeRows = [
+  { Name: "laifapp_mysql", Service: "mysql", State: "running", Status: "Up 5 minutes" },
+  { Name: "laifapp_php", Service: "app", State: "exited", Status: "Exited (0) 16 hours ago" },
+]
+ok(
+  "matchComposeRow no confunde laifapp_mysql con el servicio app",
+  E.matchComposeRow(composeRows, "app")?.Service === "app",
+  JSON.stringify(E.matchComposeRow(composeRows, "app")),
+)
+ok(
+  "matchComposeRow cae al nombre exacto cuando no hay Service",
+  E.matchComposeRow([{ Name: "x-app" }], "x-app")?.Name === "x-app",
+)
+ok(
+  "matchComposeRow no matchea por substring",
+  E.matchComposeRow([{ Name: "laifapp_mysql" }], "app") === undefined,
+)
+
+// ── verifyInteractive: bounded wait for the declared check
+ok("verifyInteractive: check que pasa → true", (await E.verifyInteractive(withCheck("true"), "app", undefined, 1500)) === true)
+ok(
+  "verifyInteractive: check que falla → false",
+  (await E.verifyInteractive(withCheck("test -f /rundev-does-not-exist"), "app", undefined, 1000)) === false,
+)
+ok("verifyInteractive: sin check declarado → null", (await E.verifyInteractive(loaded, "interactive", "android", 1000)) === null)
+ok(
+  "verifyInteractive sigue el check del target activo",
+  (await E.verifyInteractive(perTarget, "app", "ios", 1000)) === false &&
+    (await E.verifyInteractive(perTarget, "app", "android", 1000)) === true,
+)
+
 // ── terminal guard
 const line = buildLine({ cwd: root, command: "flutter run", label: "app · ios" })
 ok("buildLine empieza con el guard cd", Boolean(line?.startsWith(`cd '${root}' &&`)), line ?? "(null)")

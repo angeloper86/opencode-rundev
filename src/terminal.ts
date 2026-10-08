@@ -68,15 +68,19 @@ async function ghosttySplit(line: string): Promise<{ ok: boolean; detail: string
 }
 
 async function clipboard(line: string): Promise<{ ok: boolean; detail: string }> {
-  const r = await run("/usr/bin/pbcopy", [], { timeoutMs: 5_000 })
-  if (r.code !== 0) {
-    // pbcopy reads stdin; retry through a shell so the line can be piped
-    const r2 = await run("/bin/sh", ["-lc", `printf %s ${quoteForTyping(line)} | pbcopy`], { timeoutMs: 5_000 })
-    return r2.code === 0
-      ? { ok: true, detail: "command copied to the clipboard (press cmd+D and paste)" }
-      : { ok: false, detail: "could not copy to the clipboard" }
-  }
-  return { ok: true, detail: "command copied to the clipboard (press cmd+D and paste)" }
+  // pbcopy reads stdin, and execFile closes it empty — the line must be piped
+  // through a shell or the clipboard would end up with nothing.
+  const quoted = quoteForTyping(line)
+  if (!quoted) return { ok: false, detail: "cannot copy the line safely (it contains quotes)" }
+  const r = await run("/bin/sh", ["-lc", `printf %s ${quoted} | pbcopy`], { timeoutMs: 5_000 })
+  return r.code === 0
+    ? { ok: true, detail: "command copied to the clipboard (press cmd+D and paste)" }
+    : { ok: false, detail: r.err.trim() || "could not copy to the clipboard" }
+}
+
+/** Copies the exact panel line, for the launch-time verification fallback. */
+export async function copyLine(line: string): Promise<boolean> {
+  return (await clipboard(line)).ok
 }
 
 async function openWindow(line: string): Promise<{ ok: boolean; detail: string }> {

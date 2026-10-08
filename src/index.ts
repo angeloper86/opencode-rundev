@@ -21,7 +21,7 @@ import {
 } from "./manifest.ts"
 import * as E from "./engine.ts"
 import { scan } from "./scan.ts"
-import { defaultStrategy, openPanel, type TerminalStrategy } from "./terminal.ts"
+import { copyLine, defaultStrategy, openPanel, type TerminalStrategy } from "./terminal.ts"
 
 /** Verbs whose report is also mirrored into the session timeline. */
 const TIMELINE_VERBS = new Set(["init", "up", "down", "status", "doctor", "env", "uninstall"])
@@ -60,6 +60,9 @@ unknown, say so and suggest one.
   target (\`targets.android.check\`) so each device is verified on its own terms. With a check, a
   closed app is detected and \`up\` relaunches. Without one, rundev trusts the panel it launched —
   a second \`up\` never opens a duplicate panel and \`up --force\` is the way to relaunch one.
+- \`up\` verifies the launch itself when a check is declared: it waits (bounded) right after
+  opening the panel; if the check does not pass it reports the launch as unverified, puts the
+  command on the clipboard and forgets the panel, so the next \`up\` retries.
 - \`stopMode: "fire-and-forget"\`: for services whose shutdown takes a while (emulators).
 
 ## Workflow
@@ -203,6 +206,27 @@ export default Plugin.define({
 
     function upTable(results: E.UpResult[]): string {
       return ["rundev · result", ...results.map(resultLine)].join("\n")
+    }
+
+    // ── interactive launches: open the panel, then verify the declared check ─
+    function makeLaunchFn(loaded: Loaded, strategy: TerminalStrategy | undefined, waitMs: number | undefined) {
+      return async (plan: E.LaunchPlan) => {
+        const r = await openPanel({ cwd: plan.cwd, command: plan.command, label: plan.label, strategy })
+        if (!r.ok) return { ok: false, detail: r.detail }
+        const verdict = await E.verifyInteractive(loaded, plan.name, plan.target, waitMs)
+        if (verdict === false) {
+          const copied = await copyLine(r.line)
+          return {
+            ok: false,
+            detail:
+              `panel opened but the check did not pass yet (is it still building?)` +
+              (copied
+                ? " — the command is on the clipboard: cmd+D → paste in the panel if it is empty"
+                : ` — run it by hand: ${r.line}`),
+          }
+        }
+        return { ok: true, detail: `${r.detail}${verdict === true ? " · check passes" : ""} → ${r.line}` }
+      }
     }
 
     // ── one entry point for command + tools ────────────────────────────────
@@ -442,17 +466,17 @@ export default Plugin.define({
 
         const t0 = Date.now()
         const strategy = flagValue(argv, "strategy") as TerminalStrategy | undefined
-        const launchFn = async (plan: E.LaunchPlan) => {
-          const r = await openPanel({ cwd: plan.cwd, command: plan.command, label: plan.label, strategy })
-          return { ok: r.ok, detail: `${r.detail}${r.ok ? ` → ${r.line}` : ""}` }
-        }
         const waitMs = flagValue(argv, "wait") ? Number(flagValue(argv, "wait")) : undefined
         const lines = [title]
         for (const m of selection) {
           if (verb === "status") {
             lines.push("", `  ${m.name}`, statusTable(m.loaded, await E.statusAll(m.loaded), false))
           } else if (verb === "up") {
-            const rs = await E.up(m.loaded, defaultSet(m.loaded), { waitMs, launch: launchFn, force: flags.has("force") })
+            const rs = await E.up(m.loaded, defaultSet(m.loaded), {
+              waitMs,
+              launch: makeLaunchFn(m.loaded, strategy, waitMs),
+              force: flags.has("force"),
+            })
             lines.push("", `  ${m.name}`, ...rs.map(resultLine))
           } else {
             const rs = await E.down(m.loaded, defaultSet(m.loaded))
@@ -507,11 +531,7 @@ export default Plugin.define({
         }
         case "up": {
           const t0 = Date.now()
-          const launchFn = async (plan: E.LaunchPlan) => {
-            const strategy = flagValue(argv, "strategy") as TerminalStrategy | undefined
-            const r = await openPanel({ cwd: plan.cwd, command: plan.command, label: plan.label, strategy })
-            return { ok: r.ok, detail: `${r.detail}${r.ok ? ` → ${r.line}` : ""}` }
-          }
+          const strategy = flagValue(argv, "strategy") as TerminalStrategy | undefined
           const waitMs = flagValue(argv, "wait") ? Number(flagValue(argv, "wait")) : undefined
           const force = flags.has("force")
 
@@ -526,13 +546,17 @@ export default Plugin.define({
                 continue
               }
               E.emit(depLoaded.root, { type: "event", level: "info", message: `workspace dependency of ${me}` })
-              const rs = await E.up(depLoaded, defaultSet(depLoaded), { waitMs, launch: launchFn, force })
+              const rs = await E.up(depLoaded, defaultSet(depLoaded), {
+                waitMs,
+                launch: makeLaunchFn(depLoaded, strategy, waitMs),
+                force,
+              })
               dependencies.push(...rs.map((r) => `  ${resultIcon(r.action)} ${`${dep}:${r.name}`.padEnd(18)} ${r.action.padEnd(8)} ${r.detail}`))
             }
           }
 
           const names = services.length ? services : defaultSet(loaded)
-          const results = await E.up(loaded, names, { waitMs, targets, launch: launchFn, force })
+          const results = await E.up(loaded, names, { waitMs, targets, launch: makeLaunchFn(loaded, strategy, waitMs), force })
           const head = dependencies.length ? `workspace dependencies:\n${dependencies.join("\n")}\n\n` : ""
           return `${head}${upTable(results)}\n\n(${((Date.now() - t0) / 1000).toFixed(1)}s)`
         }
