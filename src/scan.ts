@@ -7,7 +7,6 @@
 
 import fs from "node:fs"
 import path from "node:path"
-import { ensureGitignored } from "./engine.ts"
 import type { Manifest, Service } from "./manifest.ts"
 
 export interface ScanResult {
@@ -72,19 +71,12 @@ function parseCompose(text: string): Record<string, { image?: string; ports: str
 }
 
 /** Registers the project browser once (vite, or a web server in compose). */
-function addBrowser(
-  root: string,
-  url: string,
-  services: Record<string, Service>,
-  defaults: string[],
-  notes: string[],
-) {
+function addBrowser(url: string, services: Record<string, Service>, defaults: string[], notes: string[]) {
   if (services.browser) return
   services.browser = { kind: "browser", url, profile: ".opencode/.chrome-profile" }
   defaults.push("browser")
-  if (ensureGitignored(root, ".opencode/.chrome-profile/")) {
-    notes.push("browser: added `.opencode/.chrome-profile/` to .gitignore")
-  }
+  // The scan is read-only; `init` is what adds the profile to .gitignore.
+  notes.push("browser: the profile lives in .opencode/.chrome-profile/ (init gitignores it)")
 }
 
 /** Compose services that are tooling, not the app you open in a browser. */
@@ -226,13 +218,13 @@ export function scan(root: string): ScanResult {
       up: "flutter run",
       defaultTarget: "android",
       targets: {
+        // No `device`: rundev resolves the connected emulator / booted simulator
+        // and passes `-d` when it opens the panel. Pin one only if you must.
         android: {
-          device: "emulator",
           ...(hasAndroid ? { requires: ["emulator"] } : {}),
           ...(sections.includes("ANDROID") ? { envSection: "ANDROID" } : {}),
         },
         ios: {
-          device: "simulator",
           ...(hasIos ? { requires: ["simulator"] } : {}),
           ...(sections.includes("IOS") ? { envSection: "IOS" } : {}),
         },
@@ -262,7 +254,7 @@ export function scan(root: string): ScanResult {
 
   // one project browser: VS Code's URL wins, then the compose web server, then vite
   const browserUrl = vscodeUrl ?? composeWebUrl ?? viteUrl
-  if (browserUrl) addBrowser(root, browserUrl, services, defaults, notes)
+  if (browserUrl) addBrowser(browserUrl, services, defaults, notes)
 
   const draft: Manifest = {
     version: 1,

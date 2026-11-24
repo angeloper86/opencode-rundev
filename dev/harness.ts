@@ -8,6 +8,9 @@
 
 import plugin from "../src/index.ts"
 
+// a harness run must not post its report into a real session
+process.env.RUNDEV_NO_TIMELINE ??= "1"
+
 const dir = process.argv[2] ?? process.cwd()
 const task = process.argv[3] ?? "status"
 const toolJSON = process.argv[4] ?? "{}"
@@ -32,6 +35,7 @@ const mockCtx: any = {
   tool: {
     transform: async (cb: any) =>
       cb({ namespace: (n: any) => namespaces.push(n), add: (t: any) => tools.push(t) }),
+    reload: async () => {},
   },
   skill: { transform: async (cb: any) => cb({ add: (s: any) => skills.push(s) }) },
 }
@@ -42,6 +46,13 @@ console.log("comando:", commands.map((c) => c.name).join(", ") || "(ninguno)")
 console.log("tools:", tools.map((t) => t.name).join(", ") || "(ninguno)")
 console.log("skills:", skills.map((s) => s.id).join(", ") || "(ninguno)")
 void skills_seen
+
+// `describe`: what the model actually sees of this plugin (catalog for this dir).
+if (task === "describe") {
+  for (const ns of namespaces) console.log(`\nnamespace ${ns.name}: ${ns.description}`)
+  for (const t of tools) console.log(`\n${t.name}: ${t.description}`)
+  process.exit(0)
+}
 
 if (task.startsWith("tool:")) {
   const name = task.slice(5)

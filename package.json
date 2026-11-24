@@ -54,6 +54,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "smoke": "deno run -A dev/smoke.ts",
-    "prepublishOnly": "npm run typecheck && npm run smoke"
-  }
+    "test": "node --experimental-strip-types --no-warnings dev/plugin.test.ts",
+    "prepublishOnly": "npm run typecheck && npm run smoke && npm test"
+  },
+  "packageManager": "npm@10.9.9"
 }

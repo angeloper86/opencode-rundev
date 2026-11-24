@@ -16,7 +16,8 @@ import { spawn } from "node:child_process"
 import { createSignal, For, Show } from "solid-js"
 import { Plugin } from "@opencode/plugin/tui"
 import type { Context } from "@opencode/plugin/tui/context"
-import { findManifest, findWorkspace, workspaceMembers, type Loaded } from "./manifest.ts"
+import { registerClient, ttyOfPid, unregisterClient } from "./clients.ts"
+import { dependencyOrder, findManifest, findWorkspace, memberOf, workspaceMembers, type Loaded } from "./manifest.ts"
 
 interface SnapService {
   name: string
@@ -48,21 +49,25 @@ function readSnapshot(root: string): Snap | null {
 
 function alive(pid?: number): boolean {
   if (!pid) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
+  for (const target of [pid, -pid]) {
+    // the leader, or — when it exited and its children kept serving — the group
+    try {
+      process.kill(target, 0)
+      return true
+    } catch (err: any) {
+      if (err?.code === "EPERM") return true
+    }
   }
+  return false
 }
 
 /**
  * A service is live if its recorded pid still exists. Interactive panels have no
- * pid: there the state rundev recorded when it opened the panel is all there is.
+ * pid: there the state the engine recorded (it asks the terminal itself) is all there is.
  */
 function isLive(svc: SnapService): boolean {
-  if (svc.kind === "process") return svc.state === "running" && alive(svc.pid)
-  return svc.state === "running"
+  if (svc.kind === "process") return (svc.state === "running" || svc.state === "starting") && alive(svc.pid)
+  return svc.state === "running" || svc.state === "starting"
 }
 
 /** One line describing a member's services and their last known state. */
@@ -71,7 +76,8 @@ function describeMember(member: { name: string; loaded: Loaded }): string {
   return Object.keys(member.loaded.manifest.services)
     .map((name) => {
       const found = snap?.services.find((s) => s.name === name)
-      const mark = found?.state === "running" ? "●" : found?.state === "unhealthy" ? "!" : "○"
+      const mark =
+        found?.state === "running" ? "●" : found?.state === "starting" ? "…" : found?.state === "unhealthy" ? "!" : "○"
       return `${mark} ${name}`
     })
     .join("  ")
@@ -81,21 +87,35 @@ export default Plugin.define({
   id: "rundev.tui",
   setup(context: Context) {
     const dir: string = context.location?.directory ?? process.cwd()
-    const eventsFile = path.join(dir, ".opencode", ".rundev", "events.jsonl")
     const theme = context.theme
     // the theme's own accent for a focused surface (fallback: its base variant)
     const highlight = theme.background.action.primary.state({ focused: true })
     const highlightBase = theme.background.action.primary.base
 
+    // The engine writes its state at the MANIFEST root, which is not where OpenCode
+    // was opened when that is a subfolder of the repo (apps/web of a monorepo).
+    const own = findManifest(dir)
+    const home = own?.root ?? dir
+    const ws = findWorkspace(dir)
+
     // ── live state for the sidebar: the repo, or every member at a workspace root
     const workspace = (() => {
-      const ws = findWorkspace(dir)
-      if (!ws || findManifest(dir)) return null
+      if (!ws || own) return null
       return { name: ws.workspace.name ?? path.basename(ws.root), members: workspaceMembers(ws) }
     })()
-    const [snap, setSnap] = createSignal<Snap | null>(readSnapshot(dir))
+    // Inside a member, what its `up` brings up first lives in other repos: follow them too.
+    const dependencies = (() => {
+      const me = ws && own ? memberOf(ws, own.root) : undefined
+      if (!ws || !me) return []
+      const all = workspaceMembers(ws)
+      return dependencyOrder(ws, me).flatMap((name) => all.filter((m) => m.name === name))
+    })()
+    const [snap, setSnap] = createSignal<Snap | null>(readSnapshot(home))
     const [members, setMembers] = createSignal<Array<{ name: string; services: SnapService[] }>>(
       (workspace?.members ?? []).map((m) => ({ name: m.name, services: readSnapshot(m.loaded.root)?.services ?? [] })),
+    )
+    const [depBlocks, setDepBlocks] = createSignal<Array<{ name: string; services: SnapService[] }>>(
+      dependencies.map((m) => ({ name: m.name, services: readSnapshot(m.loaded.root)?.services ?? [] })),
     )
     const [tick, setTick] = createSignal(0)
     const poll = setInterval(() => {
@@ -104,7 +124,10 @@ export default Plugin.define({
           workspace.members.map((m) => ({ name: m.name, services: readSnapshot(m.loaded.root)?.services ?? [] })),
         )
       } else {
-        setSnap(readSnapshot(dir))
+        setSnap(readSnapshot(home))
+        if (dependencies.length) {
+          setDepBlocks(dependencies.map((m) => ({ name: m.name, services: readSnapshot(m.loaded.root)?.services ?? [] })))
+        }
       }
       setTick((n) => n + 1)
     }, 1500)
@@ -213,44 +236,65 @@ export default Plugin.define({
     }
 
     // ── reports + progress published by the server plugin
-    let offset = 0
-    try {
-      offset = fs.statSync(eventsFile).size // skip history
-    } catch {
-      offset = 0
+    // In workspace mode every member publishes to its own repo: read them all,
+    // otherwise a member started from this session reports into the void.
+    const eventsFileFor = (root: string) => path.join(root, ".opencode", ".rundev", "events.jsonl")
+    const eventRoots = workspace
+      ? [dir, ...workspace.members.map((m) => m.loaded.root)]
+      : [home, ...dependencies.map((m) => m.loaded.root)]
+    const offsets = new Map<string, number>()
+    for (const root of eventRoots) {
+      const file = eventsFileFor(root)
+      try {
+        offsets.set(file, fs.statSync(file).size) // skip history
+      } catch {
+        offsets.set(file, 0)
+      }
     }
-    const tail = setInterval(() => {
-      let size = 0
-      try {
-        size = fs.statSync(eventsFile).size
-      } catch {
-        return
-      }
-      if (size < offset) offset = 0
-      if (size === offset) return
 
-      let chunk = ""
-      try {
-        const fd = fs.openSync(eventsFile, "r")
-        const buf = Buffer.alloc(size - offset)
-        fs.readSync(fd, buf, 0, buf.length, offset)
-        fs.closeSync(fd)
-        chunk = buf.toString("utf8")
-      } catch {
-        return
-      }
-      offset = size
-
-      let lastReport: any = null
-      let selectRequested = false
-      for (const line of chunk.split("\n")) {
-        if (!line.trim()) continue
-        let ev: any
+    /** New event lines across every repo of this location. */
+    function drainEvents(): any[] {
+      const out: any[] = []
+      for (const [file, seen] of offsets) {
+        let size = 0
         try {
-          ev = JSON.parse(line)
+          size = fs.statSync(file).size
         } catch {
           continue
         }
+        let offset = seen
+        if (size < offset) offset = 0
+        if (size === offset) continue
+        let chunk = ""
+        try {
+          const fd = fs.openSync(file, "r")
+          const buf = Buffer.alloc(size - offset)
+          fs.readSync(fd, buf, 0, buf.length, offset)
+          fs.closeSync(fd)
+          chunk = buf.toString("utf8")
+        } catch {
+          continue
+        }
+        offsets.set(file, size)
+        for (const line of chunk.split("\n")) {
+          if (!line.trim()) continue
+          try {
+            out.push(JSON.parse(line))
+          } catch {
+            /* ignore a half line */
+          }
+        }
+      }
+      return out
+    }
+
+    const tail = setInterval(() => {
+      const events = drainEvents()
+      if (events.length === 0) return
+
+      let lastReport: any = null
+      let selectRequested = false
+      for (const ev of events) {
         if (ev.type === "report") {
           lastReport = ev
           continue
@@ -344,25 +388,57 @@ export default Plugin.define({
           )
         }
         const s = snap()
-        if (!s || s.services.length === 0) return null
+        // the repos its `up` brings up first, only while they have something running
+        const deps = depBlocks().filter((m) =>
+          m.services.some((svc) => {
+            tick()
+            return isLive(svc)
+          }),
+        )
+        if ((!s || s.services.length === 0) && deps.length === 0) return null
         return (
           <box flexDirection="column" paddingLeft={1}>
-            <text fg={theme.text.base}>
-              <b>RUNDEV</b>
-              {` - ${path.basename(s.root)}`}
-            </text>
-            <For each={s.services}>
-              {(svc) => {
-                const live = () => {
-                  tick()
-                  return isLive(svc)
-                }
-                return (
-                  <text fg={live() ? theme.text.feedback.success.base : theme.text.muted}>
-                    {`${live() ? "●" : "○"} ${svc.name}${svc.port ? ` :${svc.port}` : ""} ${live() ? "up" : svc.state}`}
+            <Show when={s && s.services.length > 0}>
+              <text fg={theme.text.base}>
+                <b>RUNDEV</b>
+                {` - ${path.basename(s?.root ?? home)}`}
+              </text>
+              <For each={s?.services ?? []}>
+                {(svc) => {
+                  const live = () => {
+                    tick()
+                    return isLive(svc)
+                  }
+                  return (
+                    <text fg={live() ? theme.text.feedback.success.base : theme.text.muted}>
+                      {`${live() ? "●" : "○"} ${svc.name}${svc.port ? ` :${svc.port}` : ""} ${live() ? (svc.state === "starting" ? "starting" : "up") : svc.state}`}
+                    </text>
+                  )
+                }}
+              </For>
+            </Show>
+            <For each={deps}>
+              {(member) => (
+                <box flexDirection="column">
+                  <text fg={theme.text.muted}>{` `}</text>
+                  <text fg={theme.text.base}>
+                    <b>{`RUNDEV - ${member.name}`}</b>
                   </text>
-                )
-              }}
+                  <For each={member.services}>
+                    {(svc) => {
+                      const live = () => {
+                        tick()
+                        return isLive(svc)
+                      }
+                      return (
+                        <text fg={live() ? theme.text.feedback.success.base : theme.text.muted}>
+                          {`${live() ? "●" : "○"} ${svc.name}${svc.port ? ` :${svc.port}` : ""} ${live() ? "up" : svc.state}`}
+                        </text>
+                      )
+                    }}
+                  </For>
+                </box>
+              )}
             </For>
           </box>
         )
@@ -439,9 +515,26 @@ export default Plugin.define({
       },
     })
 
+    // ── tell the server which terminal this session lives in, so a panel opens next
+    // to it and never "wherever the focus happens to be"
+    const tty = ttyOfPid(process.pid)
+    let announced: string | undefined | null = null
+    const announce = () => {
+      const sessionID = currentSessionID()
+      if (announced === sessionID) return
+      announced = sessionID
+      registerClient({ pid: process.pid, tty, dir, sessionID })
+    }
+    announce()
+    const announcer = setInterval(announce, 1500)
+    const goodbye = () => unregisterClient(process.pid)
+    process.once("exit", goodbye)
+
     return () => {
       clearInterval(poll)
       clearInterval(tail)
+      clearInterval(announcer)
+      goodbye()
     }
   },
 })
